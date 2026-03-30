@@ -1,8 +1,61 @@
-scenario_1: box=3 vert=3 horiz=3 conn=2 text=3 read=2 subtotal=16/30
-scenario_2: box=4 vert=3 horiz=3 conn=2 text=3 read=3 subtotal=18/30
-scenario_3: box=4 vert=3 horiz=3 conn=3 text=4 read=3 subtotal=20/30
-scenario_4: box=4 vert=3 horiz=4 conn=3 text=4 read=4 subtotal=22/30
-scenario_5: box=3 vert=2 horiz=3 conn=2 text=3 read=2 subtotal=15/30
-scenario_6: box=4 vert=3 horiz=4 conn=4 text=2 read=4 subtotal=21/30
-score=112/180
-notes: S1: box collision where Grant access bottom merges with Verify code top (++ artifact). Loop-back connector crude. S2: no solid vs dashed arrow distinction for request/response. Lifeline spacing uneven. Some arrows miss destination lifelines. S3: cleanest diagram but Professor->Course arrow label placement awkward (1/N inline). S4: 4 service connectors going to 3 data boxes leaves one connector dangling. Otherwise clean. S5: worst score - CLOSING box cramped, bottom row with 3 adjacent state boxes is messy, many transitions hard to trace, vertical alignment breaks down in lower section. S6: numbers left-aligned instead of right-aligned per spec. Nested header spanning works but column alignment has minor wobbles.
+v1_scenario_1: box=4 vert=4 horiz=4 conn=3 text=4 read=3 subtotal=22/30
+  Login flowchart: boxes properly closed but connector routing overlaps near Code Valid? (|+yes, vv).
+  Loop-back from Attempts>=3?->creds and retry->verify creates visual clutter.
+
+v1_scenario_2: box=5 vert=4 horiz=4 conn=4 text=3 read=4 subtotal=24/30
+  Sequence diagram: lifelines vertical, arrows connect correctly. Note box truncates
+  "Timeout after 30s" to just "Timeout". Dashed/solid arrows distinguishable.
+
+v1_scenario_3: box=5 vert=4 horiz=4 conn=4 text=4 read=4 subtotal=25/30
+  ER diagram: all entity boxes properly formed with label/body separator. Connectors
+  with 1:N labels route cleanly. Student->Enrollment upward arrow works.
+
+v1_scenario_4: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Layered architecture: excellent. Bus fan-out/fan-in connectors between layers are
+  clean. Layer labels on left, all boxes properly aligned within each layer.
+
+v1_scenario_5: box=3 vert=3 horiz=3 conn=2 text=3 read=2 subtotal=16/30
+  TCP state machine: CLOSING box label missing/overwritten by connector routing.
+  Connector labels overlap with pipe characters. Many transitions create visual mess.
+  Hard to trace individual state transitions through the tangle of lines.
+
+v1_scenario_6: box=5 vert=5 horiz=5 conn=4 text=4 read=3 subtotal=26/30
+  Complex table: alignment within each sub-table is perfect. Table auto-split into
+  two parts (Q1-Q4 + Growth/Annual) due to 78-char limit. Split hurts readability
+  as a unified view. Numbers right-aligned correctly.
+
+v1_total=143/180
+
+v2_scenario_1: box=5 vert=5 horiz=5 conn=4 text=4 read=2 subtotal=25/30
+  Gantt chart: table alignment perfect but split into two parts (W1-W10 + W11-W12)
+  defeats the Gantt visualization purpose. "##" markers functional but not visual.
+  Cannot see full timeline in one view.
+
+v2_scenario_2: box=5 vert=4 horiz=4 conn=4 text=5 read=4 subtotal=26/30
+  Binary tree: all 15 nodes rendered with proper BST structure. Symmetric layout,
+  same-level nodes at same vertical position. Uses horizontal branch connectors
+  (not / \) which is less traditional but clear. Good use of grid.
+
+v2_scenario_3: box=5 vert=5 horiz=5 conn=3 text=3 read=2 subtotal=23/30
+  IPv4 packet header: table split into two parts. Fields don't visually span columns
+  (table mode can't merge cells). Second table mostly empty cells. Doesn't resemble
+  a real packet diagram - fundamental mode limitation.
+
+v2_scenario_4: box=5 vert=4 horiz=4 conn=3 text=5 read=3 subtotal=24/30
+  Git branch graph: main line flows left-to-right with --> connectors. Branch-off
+  and merge points visible. "merge|" labels clash with pipe characters. U2->M7 merge
+  connector routes with a long horizontal line. Branches laid out vertically below main.
+
+v2_scenario_5: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Feature comparison matrix: clean, fits within 78 chars without splitting. All columns
+  aligned, numbers right-aligned. Footer row with totals properly separated. Excellent.
+
+v2_scenario_6: box=5 vert=4 horiz=4 conn=3 text=3 read=3 subtotal=22/30
+  Data pipeline: left-to-right flow visible with sources/transforms/targets grouped.
+  Connector labels ("files", "cleaned") merge with box border characters on the
+  horizontal row, making them hard to read. Snowflake->Tableau routes via right-side
+  vertical which is non-obvious.
+
+v2_total=150/180
+
+combined=293/360
