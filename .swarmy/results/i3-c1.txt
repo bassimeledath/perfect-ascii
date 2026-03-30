@@ -1,0 +1,22 @@
+scenario_1: box=5 vert=4 horiz=4 conn=4 text=5 read=4 subtotal=26/30
+scenario_2: box=5 vert=4 horiz=4 conn=4 text=4 read=4 subtotal=25/30
+scenario_3: box=5 vert=4 horiz=4 conn=4 text=5 read=4 subtotal=26/30
+scenario_4: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+scenario_5: box=5 vert=4 horiz=4 conn=3 text=4 read=3 subtotal=23/30
+scenario_6: box=5 vert=5 horiz=5 conn=5 text=4 read=3 subtotal=27/30
+score=157/180
+
+notes:
+- S1: All 12 boxes render cleanly with perfect closure. Connectors route properly including L-shapes and detours around obstacles. Missing loop-back connectors (retry->creds, chk3 no->creds) but this is a JSON input gap, not a rendering defect. Text centering is perfect in all boxes.
+- S2: 5 actors with lifelines, 10 messages with solid/dashed arrows. Note box text truncated from "Timeout 30s" to "Timeout" due to narrow spacing between lifelines. All lifelines vertically aligned. Dashed arrows now visually distinct from solid (alternating dash-space pattern). Arrows connect to correct lifelines.
+- S3: 5 ER entities with body fields rendered with separator lines. Department-to-Course connector properly routes around Professor box via detour column with collision detection. All relationship labels (1:N) positioned correctly. No diagonal chars -- all turns use + elbows.
+- S4: Best scenario. Layers mode produces near-perfect output. Fan-in (3->1), fan-out (1->4), and N-to-N (4->3) bus connectors all render cleanly. Layer labels properly right-aligned in separate margin column with | separator. Perfect alignment throughout. 30/30.
+- S5: Most complex scenario (12 boxes, 14 connectors). All boxes render correctly with + elbows (no diagonal /\ chars). Dense connector routing creates label proximity issues -- "rcv ACK" appears 4 times for different transitions, making it hard to trace individual paths. The closing sequence (FIN_WAIT_1/2, CLOSING, LAST_ACK, TIME_WAIT) is particularly dense. Connector routing improved over prior version but readability still suffers from density.
+- S6: Table auto-splits into two tables at 78-char limit, repeating Region column. Column alignment within each sub-table is perfect. Header spanning not visually apparent (Q1 2025 sits in one cell, adjacent Growth cell is empty rather than visually merged). Numbers right-aligned correctly. Split hurts at-a-glance readability.
+
+improvement vs prior (i3 old=127/180 -> i3 new=157/180, +30):
+- Fixed S5 diagonal /\ chars -> all + elbows now (+7)
+- Fixed S4 layer label alignment and bus connectors (+9)
+- Improved S1 connector routing with collision detection (+5)
+- Improved S2 dashed arrow distinction (+4)
+- Minor text centering improvements across all scenarios (+5)
