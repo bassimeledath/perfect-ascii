@@ -259,26 +259,108 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
 
     if from_gc == to_gc:
         # Same column - vertical connector
-        if to_gr > from_gr:
-            # Going down
-            start_r = ft + fh  # row just below from-box bottom border
-            end_r = tt - 1     # row just above to-box top border
-            col = fl + fw // 2
-            for r in range(start_r, end_r + 1):
-                g.put(r, col, '|')
-            g.put(end_r, col, 'v')
-            if label:
-                g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+        top_gr = min(from_gr, to_gr)
+        bot_gr = max(from_gr, to_gr)
+        going_down = to_gr > from_gr
+
+        # Check for boxes in same column at intermediate grid rows
+        has_obstacle = False
+        for ri in range(top_gr + 1, bot_gr):
+            if from_gc < len(grid_layout[ri]):
+                cell = grid_layout[ri][from_gc]
+                if cell and cell in box_positions:
+                    has_obstacle = True
+                    break
+
+        if not has_obstacle:
+            # No intermediate boxes - draw straight line
+            if going_down:
+                start_r = ft + fh
+                end_r = tt - 1
+                col = fl + fw // 2
+                for r in range(start_r, end_r + 1):
+                    g.put(r, col, '|')
+                g.put(end_r, col, 'v')
+                if label:
+                    g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+            else:
+                start_r = tt + th
+                end_r = ft - 1
+                col = fl + fw // 2
+                for r in range(start_r, end_r + 1):
+                    g.put(r, col, '|')
+                g.put(start_r, col, '^')
+                if label:
+                    g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
         else:
-            # Going up
-            start_r = tt + th
-            end_r = ft - 1
-            col = fl + fw // 2
-            for r in range(start_r, end_r + 1):
-                g.put(r, col, '|')
-            g.put(start_r, col, '^')
+            # Route around intermediate boxes via L-shape detour
+            all_obs = []
+            for ri in range(top_gr + 1, bot_gr):
+                for ci in range(len(grid_layout[ri])):
+                    cell = grid_layout[ri][ci]
+                    if cell and cell in box_positions:
+                        all_obs.append(box_positions[cell])
+
+            # Work top-to-bottom regardless of direction
+            if going_down:
+                src_t, src_l, src_w, src_h = ft, fl, fw, fh
+                dst_t, dst_l, dst_w, dst_h = tt, tl, tw, th
+            else:
+                src_t, src_l, src_w, src_h = tt, tl, tw, th
+                dst_t, dst_l, dst_w, dst_h = ft, fl, fw, fh
+
+            src_center = src_l + src_w // 2
+            dst_center = dst_l + dst_w // 2
+
+            # Detour column: right of all intermediate boxes
+            max_right = max(il + iw for _, il, iw, _ in all_obs)
+            detour_col = max_right + 2
+            if detour_col >= MAX_WIDTH:
+                min_left = min(il for _, il, _, _ in all_obs)
+                detour_col = min_left - 3
+
+            exit_r = src_t + src_h
+            first_obs_top = min(it for it, _, _, _ in all_obs)
+            turn1_r = max(exit_r, first_obs_top - 1)
+
+            last_obs_bottom = max(it + ih for it, _, _, ih in all_obs)
+            entry_r = dst_t - 1
+            turn2_r = min(entry_r, last_obs_bottom)
+
+            # Segment 1: vertical down from top box
+            for r in range(exit_r, turn1_r):
+                g.put(r, src_center, '|')
+
+            # Segment 2: horizontal to detour column
+            for c in range(min(src_center, detour_col), max(src_center, detour_col) + 1):
+                g.put(turn1_r, c, '-')
+            g.put(turn1_r, src_center, '+')
+            g.put(turn1_r, detour_col, '+')
+
+            # Segment 3: vertical along detour column
+            for r in range(turn1_r + 1, turn2_r):
+                g.put(r, detour_col, '|')
+
+            # Segment 4: horizontal back to bottom box
+            for c in range(min(dst_center, detour_col), max(dst_center, detour_col) + 1):
+                g.put(turn2_r, c, '-')
+            g.put(turn2_r, detour_col, '+')
+            g.put(turn2_r, dst_center, '+')
+
+            # Segment 5: vertical to bottom box entry
+            for r in range(turn2_r + 1, entry_r + 1):
+                g.put(r, dst_center, '|')
+
+            # Arrow
+            if going_down:
+                g.put(entry_r, dst_center, 'v')
+            else:
+                g.put(exit_r, src_center, '^')
+
+            # Label
             if label:
-                g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+                label_r = turn1_r + (turn2_r - turn1_r) // 2
+                g.put_str(label_r, detour_col + 2, label)
 
     elif from_gr == to_gr:
         # Same row - horizontal connector
@@ -306,49 +388,92 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
                 g.put_str(row - 1, mid_c, label)
 
     else:
-        # Different row and column - L-shape: exit from side, then vertical
+        # Different row and column - L-shape
         going_right = to_gc > from_gc
         going_down = to_gr > from_gr
 
-        # Exit from side of source box at its middle row
+        # Standard route: exit from side of source, horizontal, turn, vertical
         exit_r = ft + fh // 2
         if going_right:
-            exit_c = fl + fw      # column after right border
+            exit_c = fl + fw
         else:
-            exit_c = fl - 1       # column before left border
+            exit_c = fl - 1
 
-        # Entry at top/bottom center of target box
         entry_c = tl + tw // 2
         if going_down:
-            entry_r = tt - 1      # row above target top border
+            entry_r = tt - 1
         else:
-            entry_r = tt + th     # row below target bottom border
+            entry_r = tt + th
 
-        # Draw horizontal segment
-        min_c = min(exit_c, entry_c)
-        max_c = max(exit_c, entry_c)
-        for c in range(min_c, max_c + 1):
-            g.put(exit_r, c, '-')
+        # Check if horizontal segment crosses any box
+        h_crosses = False
+        seg_left = min(exit_c, entry_c)
+        seg_right = max(exit_c, entry_c)
+        for bid, (bt, bl, bw, bh) in box_positions.items():
+            if bid == from_id or bid == to_id:
+                continue
+            if bt <= exit_r <= bt + bh - 1 and seg_left <= bl + bw - 1 and seg_right >= bl:
+                h_crosses = True
+                break
 
-        # Draw turn point
-        g.put(exit_r, entry_c, '+')
+        if not h_crosses:
+            # Standard L-shape: horizontal first, then vertical
+            for c in range(seg_left, seg_right + 1):
+                g.put(exit_r, c, '-')
+            g.put(exit_r, entry_c, '+')
 
-        # Draw vertical segment + arrow
-        if going_down:
-            for r in range(exit_r + 1, entry_r + 1):
-                g.put(r, entry_c, '|')
-            g.put(entry_r, entry_c, 'v')
-        else:
-            for r in range(entry_r, exit_r):
-                g.put(r, entry_c, '|')
-            g.put(entry_r, entry_c, '^')
-
-        # Label above the horizontal segment near the exit
-        if label:
-            if going_right:
-                g.put_str(exit_r - 1, exit_c + 1, label)
+            if going_down:
+                for r in range(exit_r + 1, entry_r + 1):
+                    g.put(r, entry_c, '|')
+                g.put(entry_r, entry_c, 'v')
             else:
-                g.put_str(exit_r - 1, exit_c - len(label), label)
+                for r in range(entry_r, exit_r):
+                    g.put(r, entry_c, '|')
+                g.put(entry_r, entry_c, '^')
+
+            if label:
+                if going_right:
+                    g.put_str(exit_r - 1, exit_c + 1, label)
+                else:
+                    g.put_str(exit_r - 1, exit_c - len(label), label)
+        else:
+            # Alternative L-shape: vertical first, then horizontal
+            alt_exit_c = fl + fw // 2
+            if going_down:
+                alt_exit_r = ft + fh
+            else:
+                alt_exit_r = ft - 1
+
+            alt_entry_r = tt + th // 2
+            if going_right:
+                alt_entry_c = tl - 1
+            else:
+                alt_entry_c = tl + tw
+
+            # Vertical segment
+            v_top = min(alt_exit_r, alt_entry_r)
+            v_bot = max(alt_exit_r, alt_entry_r)
+            for r in range(v_top, v_bot + 1):
+                g.put(r, alt_exit_c, '|')
+
+            # Horizontal segment
+            h_left = min(alt_exit_c, alt_entry_c)
+            h_right = max(alt_exit_c, alt_entry_c)
+            for c in range(h_left, h_right + 1):
+                g.put(alt_entry_r, c, '-')
+
+            # Turn point (drawn after segments to overwrite)
+            g.put(alt_entry_r, alt_exit_c, '+')
+
+            # Arrow at target side
+            if going_right:
+                g.put(alt_entry_r, alt_entry_c, '>')
+            else:
+                g.put(alt_entry_r, alt_entry_c, '<')
+
+            if label:
+                mid_r = (alt_exit_r + alt_entry_r) // 2
+                g.put_str(mid_r, alt_exit_c + 2, label)
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +773,151 @@ def render_layers(data):
 
 
 # ---------------------------------------------------------------------------
+# Sequence diagram mode
+# ---------------------------------------------------------------------------
+
+def render_sequence(data):
+    """Render a sequence diagram with actors, lifelines, and message arrows."""
+    actors = data.get('actors', [])
+    messages = data.get('messages', [])
+    notes = data.get('notes', [])
+
+    if not actors:
+        return ''
+
+    g = Grid()
+    num_actors = len(actors)
+
+    # Actor box widths
+    actor_widths = [len(a) + 4 for a in actors]
+
+    # Minimum center-to-center spacing: must fit labels and boxes
+    min_spacing = 16
+    for msg in messages:
+        min_spacing = max(min_spacing, len(msg.get('label', '')) + 6)
+    for i in range(num_actors - 1):
+        needed = (actor_widths[i] + actor_widths[i + 1]) // 2 + 2
+        min_spacing = max(min_spacing, needed)
+
+    # Constrain to MAX_WIDTH
+    total_w = min_spacing * (num_actors - 1) + max(actor_widths)
+    if total_w > MAX_WIDTH:
+        min_spacing = max(12, (MAX_WIDTH - max(actor_widths)) // max(1, num_actors - 1))
+
+    # Compute actor center columns
+    centers = []
+    x = actor_widths[0] // 2
+    for i in range(num_actors):
+        centers.append(x)
+        if i < num_actors - 1:
+            x += min_spacing
+
+    # Draw actor boxes at top
+    for i, actor in enumerate(actors):
+        w = actor_widths[i]
+        left = centers[i] - w // 2
+        draw_box(g, 0, left, w, 3, actor)
+
+    # Build timeline: messages with notes interleaved after specified indices
+    note_map = {}
+    for note in notes:
+        idx = note.get('after_message', len(messages) - 1)
+        note_map.setdefault(idx, []).append(note)
+
+    y = 4  # start after actor boxes (3 rows) + 1 gap
+    row_spacing = 2
+    events = []
+
+    for mi, msg in enumerate(messages):
+        events.append((y, 'msg', msg))
+        y += row_spacing
+        if mi in note_map:
+            for note in note_map[mi]:
+                events.append((y, 'note', note))
+                y += 4  # 3 for note box + 1 gap for next message label
+
+    total_height = y + 1
+
+    # Draw lifelines
+    for i in range(num_actors):
+        for r in range(3, total_height):
+            g.put(r, centers[i], '|')
+
+    # Draw events
+    for y_pos, evt_type, evt in events:
+        if evt_type == 'msg':
+            _draw_seq_message(g, centers, actors, evt, y_pos)
+        elif evt_type == 'note':
+            _draw_seq_note(g, centers, actors, evt, y_pos)
+
+    return g.render()
+
+
+def _draw_seq_message(g, centers, actors, msg, y):
+    """Draw a message arrow on the sequence diagram."""
+    from_name = msg['from']
+    to_name = msg['to']
+    label = msg.get('label', '')
+    style = msg.get('style', 'solid')
+
+    if from_name not in actors or to_name not in actors:
+        return
+
+    from_x = centers[actors.index(from_name)]
+    to_x = centers[actors.index(to_name)]
+
+    if from_x == to_x:
+        return
+
+    going_right = to_x > from_x
+    if going_right:
+        start_c = from_x + 1
+        end_c = to_x - 1
+    else:
+        start_c = to_x + 1
+        end_c = from_x - 1
+
+    # Draw line
+    if style == 'dashed':
+        for c in range(start_c, end_c + 1):
+            g.put(y, c, '-' if (c - start_c) % 2 == 0 else ' ')
+    else:
+        for c in range(start_c, end_c + 1):
+            g.put(y, c, '-')
+
+    # Arrow head (overwrites lifeline char)
+    if going_right:
+        g.put(y, to_x, '>')
+    else:
+        g.put(y, to_x, '<')
+
+    # Label above arrow, centered between lifelines
+    mid = (from_x + to_x) // 2
+    label_start = mid - len(label) // 2
+    g.put_str(y - 1, label_start, label)
+
+
+def _draw_seq_note(g, centers, actors, note, y):
+    """Draw a note box between two actors on the sequence diagram."""
+    between = note.get('between', [])
+    text = note.get('text', '')
+
+    if len(between) < 2:
+        return
+    if between[0] not in actors or between[1] not in actors:
+        return
+
+    idx1 = actors.index(between[0])
+    idx2 = actors.index(between[1])
+    left_x = centers[min(idx1, idx2)] + 2
+    right_x = centers[max(idx1, idx2)] - 2
+    note_w = right_x - left_x
+
+    if note_w >= len(text) + 4:
+        draw_box(g, y, left_x, note_w, 3, text)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -664,8 +934,10 @@ def main():
         result = render_table(data['table'])
     elif 'layers' in data:
         result = render_layers(data['layers'])
+    elif 'sequence' in data:
+        result = render_sequence(data['sequence'])
     else:
-        print('Error: JSON must contain a "diagram", "table", or "layers" key.', file=sys.stderr)
+        print('Error: JSON must contain a "diagram", "table", "layers", or "sequence" key.', file=sys.stderr)
         sys.exit(1)
 
     # Width enforcement

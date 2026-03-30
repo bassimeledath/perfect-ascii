@@ -2,7 +2,7 @@
 name: perfect-ascii
 description: "Create perfectly aligned ASCII diagrams. Use when the user asks for any ASCII art, diagram, flowchart, table, sequence diagram, architecture diagram, or visual representation using text characters. Triggers on: 'ascii diagram', 'text diagram', 'draw in ascii', 'ascii art', 'box diagram', or any request for a visual diagram that should be rendered in plain text."
 license: MIT
-version: "0.5.0"
+version: "0.6.0"
 last_updated: "2026-03-29"
 user_invocable: true
 ---
@@ -16,6 +16,7 @@ When asked for an ASCII diagram, use the `ascii-render` CLI tool. **Never draw A
 - **Flowcharts, ER diagrams, block diagrams** -> `diagram` mode
 - **Data tables, comparison grids** -> `table` mode
 - **Layered architecture** -> `layers` mode
+- **Sequence diagrams** -> `sequence` mode
 
 ## Step 2: Write the JSON input
 
@@ -102,6 +103,33 @@ Shortcut for layered architecture diagrams with automatic connectors.
 - `"connections": "between_layers"` auto-generates connectors using bus patterns (fan-out/fan-in).
 - Layer labels appear on the left margin.
 
+### sequence mode
+
+Sequence diagrams with actors, lifelines, message arrows, and notes.
+
+```json
+{
+  "sequence": {
+    "actors": ["User", "Frontend", "API Server", "Database"],
+    "messages": [
+      {"from": "User", "to": "Frontend", "label": "Click checkout", "style": "solid"},
+      {"from": "Frontend", "to": "API Server", "label": "POST /checkout", "style": "solid"},
+      {"from": "API Server", "to": "Database", "label": "INSERT order", "style": "solid"},
+      {"from": "Database", "to": "API Server", "label": "OK", "style": "dashed"},
+      {"from": "API Server", "to": "Frontend", "label": "200 OK", "style": "dashed"}
+    ],
+    "notes": [
+      {"between": ["Frontend", "API Server"], "text": "Timeout after 30s", "after_message": 1}
+    ]
+  }
+}
+```
+
+- `actors`: ordered list of participant names (left to right).
+- `messages`: each has `from`, `to`, `label`, and `style` (`"solid"` for requests `-->`, `"dashed"` for responses `- ->`).
+- `notes`: optional boxed text between two actors. `after_message` is the 0-based message index after which to place the note.
+- Lifelines are `|` characters; arrows are `-->` (solid) or `- ->` (dashed).
+
 ## Step 3: Render
 
 ```bash
@@ -121,3 +149,5 @@ Show the CLI output to the user in a fenced code block. Do not modify the output
 - For ER diagrams, use `body` to list attributes.
 - If the CLI errors, check your JSON structure matches the examples above.
 - Place boxes intentionally in the grid -- `null` creates empty cells for spacing.
+- Connectors that skip grid rows automatically route around intermediate boxes.
+- For sequence diagrams, keep actor names short and limit to 4-5 actors to fit within 78 chars.
