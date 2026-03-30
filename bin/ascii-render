@@ -126,6 +126,43 @@ def box_min_width(label, body=None):
 
 
 # ---------------------------------------------------------------------------
+# Collision detection helpers for connector routing
+# ---------------------------------------------------------------------------
+
+def _v_seg_blocked(box_positions, col, r1, r2, exclude):
+    """True if vertical line at col from r1..r2 intersects any box."""
+    top, bot = min(r1, r2), max(r1, r2)
+    for bid, (bt, bl, bw, bh) in box_positions.items():
+        if bid in exclude:
+            continue
+        if bl <= col < bl + bw and top < bt + bh and bot >= bt:
+            return True
+    return False
+
+
+def _h_seg_blocked(box_positions, row, c1, c2, exclude):
+    """True if horizontal line at row from c1..c2 intersects any box."""
+    left, right = min(c1, c2), max(c1, c2)
+    for bid, (bt, bl, bw, bh) in box_positions.items():
+        if bid in exclude:
+            continue
+        if bt <= row < bt + bh and left < bl + bw and right >= bl:
+            return True
+    return False
+
+
+def _find_clear_col(box_positions, r1, r2, preferred, exclude):
+    """Find column near preferred that's clear for vertical travel r1..r2."""
+    if not _v_seg_blocked(box_positions, preferred, r1, r2, exclude):
+        return preferred
+    for offset in range(1, MAX_WIDTH):
+        for col in (preferred + offset, preferred - offset):
+            if 0 <= col < MAX_WIDTH and not _v_seg_blocked(box_positions, col, r1, r2, exclude):
+                return col
+    return preferred
+
+
+# ---------------------------------------------------------------------------
 # Diagram mode
 # ---------------------------------------------------------------------------
 
@@ -217,7 +254,9 @@ def render_diagram(data):
                 draw_box(g, by, bx, bw, bh, b['label'], b.get('body'))
                 box_positions[cell] = (by, bx, bw, bh)
 
-    # Draw connectors
+    # Draw connectors (lines first, then labels on top)
+    used_labels = set()
+    deferred_labels = []
     for conn in connectors:
         from_id = conn['from']
         to_id = conn['to']
@@ -226,7 +265,11 @@ def render_diagram(data):
         if from_id not in box_positions or to_id not in box_positions:
             continue
 
-        draw_connector(g, box_positions, from_id, to_id, label, grid_layout)
+        draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
+                       used_labels, deferred_labels)
+
+    for lr, lc, ltext in deferred_labels:
+        g.put_str(lr, lc, ltext)
 
     return g.render()
 
@@ -240,9 +283,10 @@ def find_grid_pos(grid_layout, box_id):
     return None
 
 
-def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
-    """Draw a connector between two boxes."""
-    from_pos = box_positions[from_id]  # (top, left, width, height)
+def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
+                   used_labels=None, deferred_labels=None):
+    """Draw a connector between two boxes, routing around obstacles."""
+    from_pos = box_positions[from_id]
     to_pos = box_positions[to_id]
 
     from_grid = find_grid_pos(grid_layout, from_id)
@@ -256,168 +300,229 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
 
     ft, fl, fw, fh = from_pos
     tt, tl, tw, th = to_pos
+    exclude = {from_id, to_id}
+
+    def place_label(r, c, text):
+        if not text:
+            return
+        if used_labels is not None:
+            while (r, c) in used_labels:
+                r += 1
+            used_labels.add((r, c))
+        if deferred_labels is not None:
+            deferred_labels.append((r, c, text))
+        else:
+            g.put_str(r, c, text)
 
     if from_gc == to_gc:
         # Same column - vertical connector
-        top_gr = min(from_gr, to_gr)
-        bot_gr = max(from_gr, to_gr)
         going_down = to_gr > from_gr
 
-        # Check for boxes in same column at intermediate grid rows
-        has_obstacle = False
-        for ri in range(top_gr + 1, bot_gr):
-            if from_gc < len(grid_layout[ri]):
-                cell = grid_layout[ri][from_gc]
-                if cell and cell in box_positions:
-                    has_obstacle = True
-                    break
-
-        if not has_obstacle:
-            # No intermediate boxes - draw straight line
-            if going_down:
-                start_r = ft + fh
-                end_r = tt - 1
-                col = fl + fw // 2
-                for r in range(start_r, end_r + 1):
-                    g.put(r, col, '|')
-                g.put(end_r, col, 'v')
-                if label:
-                    g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
-            else:
-                start_r = tt + th
-                end_r = ft - 1
-                col = fl + fw // 2
-                for r in range(start_r, end_r + 1):
-                    g.put(r, col, '|')
-                g.put(start_r, col, '^')
-                if label:
-                    g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+        if going_down:
+            start_r = ft + fh
+            end_r = tt - 1
+            col = fl + fw // 2
         else:
-            # Route around intermediate boxes via L-shape detour
+            start_r = tt + th
+            end_r = ft - 1
+            col = fl + fw // 2
+
+        if not _v_seg_blocked(box_positions, col, start_r, end_r, exclude):
+            # Straight vertical line - path is clear
+            for r in range(start_r, end_r + 1):
+                g.put(r, col, '|')
+            if going_down:
+                g.put(end_r, col, 'v')
+            else:
+                g.put(start_r, col, '^')
+            if label:
+                place_label(start_r + (end_r - start_r) // 2, col + 2, label)
+        else:
+            # Route around obstacles via detour column
+            top_gr = min(from_gr, to_gr)
+            bot_gr = max(from_gr, to_gr)
+
             all_obs = []
             for ri in range(top_gr + 1, bot_gr):
                 for ci in range(len(grid_layout[ri])):
                     cell = grid_layout[ri][ci]
-                    if cell and cell in box_positions:
+                    if cell and cell in box_positions and cell not in exclude:
                         all_obs.append(box_positions[cell])
 
-            # Work top-to-bottom regardless of direction
-            if going_down:
-                src_t, src_l, src_w, src_h = ft, fl, fw, fh
-                dst_t, dst_l, dst_w, dst_h = tt, tl, tw, th
+            # Also check pixel-level collisions for non-grid-aligned boxes
+            if not all_obs:
+                for bid, bpos in box_positions.items():
+                    if bid not in exclude:
+                        bt, bl, bw, bh = bpos
+                        if bl <= col < bl + bw and start_r < bt + bh and end_r >= bt:
+                            all_obs.append(bpos)
+
+            if not all_obs:
+                # Fallback: draw straight
+                for r in range(start_r, end_r + 1):
+                    g.put(r, col, '|')
+                if going_down:
+                    g.put(end_r, col, 'v')
+                else:
+                    g.put(start_r, col, '^')
             else:
-                src_t, src_l, src_w, src_h = tt, tl, tw, th
-                dst_t, dst_l, dst_w, dst_h = ft, fl, fw, fh
+                # Work top-to-bottom regardless of direction
+                if going_down:
+                    src_t, src_l, src_w, src_h = ft, fl, fw, fh
+                    dst_t, dst_l, dst_w, dst_h = tt, tl, tw, th
+                else:
+                    src_t, src_l, src_w, src_h = tt, tl, tw, th
+                    dst_t, dst_l, dst_w, dst_h = ft, fl, fw, fh
 
-            src_center = src_l + src_w // 2
-            dst_center = dst_l + dst_w // 2
+                src_center = src_l + src_w // 2
+                dst_center = dst_l + dst_w // 2
 
-            # Detour column: right of all intermediate boxes
-            max_right = max(il + iw for _, il, iw, _ in all_obs)
-            detour_col = max_right + 2
-            if detour_col >= MAX_WIDTH:
+                exit_r = src_t + src_h
+                first_obs_top = min(it for it, _, _, _ in all_obs)
+                turn1_r = max(exit_r, first_obs_top - 1)
+
+                last_obs_bottom = max(it + ih for it, _, _, ih in all_obs)
+                entry_r = dst_t - 1
+                turn2_r = min(entry_r, last_obs_bottom)
+
+                # Find a clear detour column (verified against ALL boxes)
+                max_right = max(il + iw for _, il, iw, _ in all_obs)
                 min_left = min(il for _, il, _, _ in all_obs)
-                detour_col = min_left - 3
+                preferred = max_right + 2
+                detour_col = _find_clear_col(box_positions, turn1_r, turn2_r,
+                                             preferred, exclude)
+                if detour_col >= MAX_WIDTH:
+                    detour_col = _find_clear_col(box_positions, turn1_r, turn2_r,
+                                                 min_left - 3, exclude)
 
-            exit_r = src_t + src_h
-            first_obs_top = min(it for it, _, _, _ in all_obs)
-            turn1_r = max(exit_r, first_obs_top - 1)
+                # Segment 1: vertical from source
+                for r in range(exit_r, turn1_r):
+                    g.put(r, src_center, '|')
 
-            last_obs_bottom = max(it + ih for it, _, _, ih in all_obs)
-            entry_r = dst_t - 1
-            turn2_r = min(entry_r, last_obs_bottom)
+                # Segment 2: horizontal to detour column
+                for c in range(min(src_center, detour_col),
+                               max(src_center, detour_col) + 1):
+                    g.put(turn1_r, c, '-')
+                g.put(turn1_r, src_center, '+')
+                g.put(turn1_r, detour_col, '+')
 
-            # Segment 1: vertical down from top box
-            for r in range(exit_r, turn1_r):
-                g.put(r, src_center, '|')
+                # Segment 3: vertical along detour column
+                for r in range(turn1_r + 1, turn2_r):
+                    g.put(r, detour_col, '|')
 
-            # Segment 2: horizontal to detour column
-            for c in range(min(src_center, detour_col), max(src_center, detour_col) + 1):
-                g.put(turn1_r, c, '-')
-            g.put(turn1_r, src_center, '+')
-            g.put(turn1_r, detour_col, '+')
+                # Segment 4: horizontal back to dest
+                for c in range(min(dst_center, detour_col),
+                               max(dst_center, detour_col) + 1):
+                    g.put(turn2_r, c, '-')
+                g.put(turn2_r, detour_col, '+')
+                g.put(turn2_r, dst_center, '+')
 
-            # Segment 3: vertical along detour column
-            for r in range(turn1_r + 1, turn2_r):
-                g.put(r, detour_col, '|')
+                # Segment 5: vertical to dest entry
+                for r in range(turn2_r + 1, entry_r + 1):
+                    g.put(r, dst_center, '|')
 
-            # Segment 4: horizontal back to bottom box
-            for c in range(min(dst_center, detour_col), max(dst_center, detour_col) + 1):
-                g.put(turn2_r, c, '-')
-            g.put(turn2_r, detour_col, '+')
-            g.put(turn2_r, dst_center, '+')
+                # Arrow
+                if going_down:
+                    g.put(entry_r, dst_center, 'v')
+                else:
+                    g.put(exit_r, src_center, '^')
 
-            # Segment 5: vertical to bottom box entry
-            for r in range(turn2_r + 1, entry_r + 1):
-                g.put(r, dst_center, '|')
-
-            # Arrow
-            if going_down:
-                g.put(entry_r, dst_center, 'v')
-            else:
-                g.put(exit_r, src_center, '^')
-
-            # Label
-            if label:
-                label_r = turn1_r + (turn2_r - turn1_r) // 2
-                g.put_str(label_r, detour_col + 2, label)
+                # Label
+                if label:
+                    label_r = turn1_r + (turn2_r - turn1_r) // 2
+                    place_label(label_r, detour_col + 2, label)
 
     elif from_gr == to_gr:
         # Same row - horizontal connector
-        row = ft + fh // 2  # middle of the box
-        if to_gc > from_gc:
-            # Going right
+        row = ft + fh // 2
+        going_right = to_gc > from_gc
+
+        if going_right:
             start_c = fl + fw
             end_c = tl - 1
-            for c in range(start_c, end_c + 1):
-                g.put(row, c, '-')
-            g.put(row, end_c, '>')
-            if label:
-                mid_c = start_c + (end_c - start_c) // 2 - len(label) // 2
-                g.put_str(row - 1, mid_c, label)
         else:
-            # Going left
             start_c = tl + tw
             end_c = fl - 1
-            row = ft + fh // 2
-            for c in range(start_c, end_c + 1):
+
+        if not _h_seg_blocked(box_positions, row, start_c, end_c, exclude):
+            for c in range(min(start_c, end_c), max(start_c, end_c) + 1):
                 g.put(row, c, '-')
-            g.put(start_c, '<')
+            if going_right:
+                g.put(row, end_c, '>')
+            else:
+                g.put(row, start_c, '<')
             if label:
-                mid_c = start_c + (end_c - start_c) // 2 - len(label) // 2
-                g.put_str(row - 1, mid_c, label)
+                mid_c = min(start_c, end_c) + abs(end_c - start_c) // 2 - len(label) // 2
+                place_label(row - 1, mid_c, label)
+        else:
+            # Detour above or below obstacle boxes
+            src_center = fl + fw // 2
+            dst_center = tl + tw // 2
+
+            obs_top = min(ft, tt)
+            obs_bot = max(ft + fh, tt + th)
+            for bid, (bt, bl, bw, bh) in box_positions.items():
+                if bid in exclude:
+                    continue
+                if bt <= row < bt + bh:
+                    lo = min(start_c, end_c)
+                    hi = max(start_c, end_c)
+                    if lo < bl + bw and hi >= bl:
+                        obs_top = min(obs_top, bt)
+                        obs_bot = max(obs_bot, bt + bh)
+
+            detour_r = obs_top - 1
+            if detour_r < 0:
+                detour_r = obs_bot
+
+            # Vertical from source to detour
+            if detour_r < ft:
+                v_start = ft
+            else:
+                v_start = ft + fh
+            for r in range(min(v_start, detour_r), max(v_start, detour_r) + 1):
+                g.put(r, src_center, '|')
+            g.put(v_start, src_center, '+')
+
+            # Horizontal along detour
+            for c in range(min(src_center, dst_center),
+                           max(src_center, dst_center) + 1):
+                g.put(detour_r, c, '-')
+            g.put(detour_r, src_center, '+')
+            g.put(detour_r, dst_center, '+')
+
+            # Vertical from detour to dest
+            if detour_r < tt:
+                v_end = tt - 1
+                arrow = 'v'
+            else:
+                v_end = tt + th
+                arrow = '^'
+            for r in range(min(detour_r, v_end), max(detour_r, v_end) + 1):
+                g.put(r, dst_center, '|')
+            g.put(v_end, dst_center, arrow)
+
+            if label:
+                mid_c = min(src_center, dst_center) + abs(dst_center - src_center) // 2 - len(label) // 2
+                place_label(detour_r - 1, mid_c, label)
 
     else:
         # Different row and column - L-shape
         going_right = to_gc > from_gc
         going_down = to_gr > from_gr
 
-        # Standard route: exit from side of source, horizontal, turn, vertical
+        # --- Option A: horizontal-first L-shape ---
         exit_r = ft + fh // 2
-        if going_right:
-            exit_c = fl + fw
-        else:
-            exit_c = fl - 1
-
+        exit_c = (fl + fw) if going_right else (fl - 1)
         entry_c = tl + tw // 2
-        if going_down:
-            entry_r = tt - 1
-        else:
-            entry_r = tt + th
+        entry_r = (tt - 1) if going_down else (tt + th)
 
-        # Check if horizontal segment crosses any box
-        h_crosses = False
-        seg_left = min(exit_c, entry_c)
-        seg_right = max(exit_c, entry_c)
-        for bid, (bt, bl, bw, bh) in box_positions.items():
-            if bid == from_id or bid == to_id:
-                continue
-            if bt <= exit_r <= bt + bh - 1 and seg_left <= bl + bw - 1 and seg_right >= bl:
-                h_crosses = True
-                break
+        h_ok = not _h_seg_blocked(box_positions, exit_r, exit_c, entry_c, exclude)
+        v_ok = h_ok and not _v_seg_blocked(box_positions, entry_c, exit_r, entry_r, exclude)
 
-        if not h_crosses:
-            # Standard L-shape: horizontal first, then vertical
+        if h_ok and v_ok:
+            seg_left = min(exit_c, entry_c)
+            seg_right = max(exit_c, entry_c)
             for c in range(seg_left, seg_right + 1):
                 g.put(exit_r, c, '-')
             g.put(exit_r, entry_c, '+')
@@ -433,47 +538,84 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
 
             if label:
                 if going_right:
-                    g.put_str(exit_r - 1, exit_c + 1, label)
+                    place_label(exit_r - 1, exit_c + 1, label)
                 else:
-                    g.put_str(exit_r - 1, exit_c - len(label), label)
+                    place_label(exit_r - 1, exit_c - len(label), label)
+
         else:
-            # Alternative L-shape: vertical first, then horizontal
+            # --- Option B: vertical-first L-shape ---
             alt_exit_c = fl + fw // 2
-            if going_down:
-                alt_exit_r = ft + fh
-            else:
-                alt_exit_r = ft - 1
-
+            alt_exit_r = (ft + fh) if going_down else (ft - 1)
             alt_entry_r = tt + th // 2
-            if going_right:
-                alt_entry_c = tl - 1
+            alt_entry_c = (tl - 1) if going_right else (tl + tw)
+
+            v_ok2 = not _v_seg_blocked(box_positions, alt_exit_c,
+                                       alt_exit_r, alt_entry_r, exclude)
+            h_ok2 = v_ok2 and not _h_seg_blocked(box_positions, alt_entry_r,
+                                                  alt_exit_c, alt_entry_c, exclude)
+
+            if v_ok2 and h_ok2:
+                v_top = min(alt_exit_r, alt_entry_r)
+                v_bot = max(alt_exit_r, alt_entry_r)
+                for r in range(v_top, v_bot + 1):
+                    g.put(r, alt_exit_c, '|')
+
+                h_left = min(alt_exit_c, alt_entry_c)
+                h_right = max(alt_exit_c, alt_entry_c)
+                for c in range(h_left, h_right + 1):
+                    g.put(alt_entry_r, c, '-')
+
+                g.put(alt_entry_r, alt_exit_c, '+')
+
+                if going_right:
+                    g.put(alt_entry_r, alt_entry_c, '>')
+                else:
+                    g.put(alt_entry_r, alt_entry_c, '<')
+
+                if label:
+                    mid_r = (alt_exit_r + alt_entry_r) // 2
+                    place_label(mid_r, alt_exit_c + 2, label)
+
             else:
-                alt_entry_c = tl + tw
+                # --- Option C: 3-segment H-V-H detour ---
+                src_exit_r = ft + fh // 2
+                dst_entry_r = tt + th // 2
+                src_exit_c = (fl + fw) if going_right else (fl - 1)
+                dst_entry_c = (tl - 1) if going_right else (tl + tw)
 
-            # Vertical segment
-            v_top = min(alt_exit_r, alt_entry_r)
-            v_bot = max(alt_exit_r, alt_entry_r)
-            for r in range(v_top, v_bot + 1):
-                g.put(r, alt_exit_c, '|')
+                mid_col = (src_exit_c + dst_entry_c) // 2
+                clear_col = _find_clear_col(
+                    box_positions,
+                    min(src_exit_r, dst_entry_r),
+                    max(src_exit_r, dst_entry_r),
+                    mid_col, exclude)
 
-            # Horizontal segment
-            h_left = min(alt_exit_c, alt_entry_c)
-            h_right = max(alt_exit_c, alt_entry_c)
-            for c in range(h_left, h_right + 1):
-                g.put(alt_entry_r, c, '-')
+                # Horizontal from source to clear_col
+                for c in range(min(src_exit_c, clear_col),
+                               max(src_exit_c, clear_col) + 1):
+                    g.put(src_exit_r, c, '-')
+                g.put(src_exit_r, clear_col, '+')
 
-            # Turn point (drawn after segments to overwrite)
-            g.put(alt_entry_r, alt_exit_c, '+')
+                # Vertical along clear_col
+                for r in range(min(src_exit_r, dst_entry_r) + 1,
+                               max(src_exit_r, dst_entry_r)):
+                    g.put(r, clear_col, '|')
 
-            # Arrow at target side
-            if going_right:
-                g.put(alt_entry_r, alt_entry_c, '>')
-            else:
-                g.put(alt_entry_r, alt_entry_c, '<')
+                # Horizontal from clear_col to dest
+                for c in range(min(clear_col, dst_entry_c),
+                               max(clear_col, dst_entry_c) + 1):
+                    g.put(dst_entry_r, c, '-')
+                g.put(dst_entry_r, clear_col, '+')
 
-            if label:
-                mid_r = (alt_exit_r + alt_entry_r) // 2
-                g.put_str(mid_r, alt_exit_c + 2, label)
+                # Arrow
+                if going_right:
+                    g.put(dst_entry_r, dst_entry_c, '>')
+                else:
+                    g.put(dst_entry_r, dst_entry_c, '<')
+
+                if label:
+                    mid_r = (src_exit_r + dst_entry_r) // 2
+                    place_label(mid_r, clear_col + 2, label)
 
 
 # ---------------------------------------------------------------------------
@@ -913,8 +1055,11 @@ def _draw_seq_note(g, centers, actors, note, y):
     right_x = centers[max(idx1, idx2)] - 2
     note_w = right_x - left_x
 
-    if note_w >= len(text) + 4:
-        draw_box(g, y, left_x, note_w, 3, text)
+    if note_w < 6:
+        return  # too narrow for any note
+    if note_w < len(text) + 4:
+        text = text[:note_w - 4]
+    draw_box(g, y, left_x, note_w, 3, text)
 
 
 # ---------------------------------------------------------------------------

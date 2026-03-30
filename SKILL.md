@@ -2,7 +2,7 @@
 name: perfect-ascii
 description: "Create perfectly aligned ASCII diagrams. Use when the user asks for any ASCII art, diagram, flowchart, table, sequence diagram, architecture diagram, or visual representation using text characters. Triggers on: 'ascii diagram', 'text diagram', 'draw in ascii', 'ascii art', 'box diagram', or any request for a visual diagram that should be rendered in plain text."
 license: MIT
-version: "0.6.0"
+version: "0.7.0"
 last_updated: "2026-03-29"
 user_invocable: true
 ---
