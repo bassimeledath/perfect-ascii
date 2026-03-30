@@ -245,7 +245,7 @@ def render_diagram(data):
                 box_positions[cell] = (by, bx, bw, bh)
 
     # Draw connectors (lines first, then labels on top)
-    used_labels = set()
+    used_label_extents = set()
     deferred_labels = []
     for conn in connectors:
         from_id = conn['from']
@@ -256,7 +256,7 @@ def render_diagram(data):
             continue
 
         draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
-                       used_labels, deferred_labels)
+                       used_label_extents, deferred_labels)
 
     for lr, lc, ltext in deferred_labels:
         g.put_str(lr, lc, ltext)
@@ -274,7 +274,7 @@ def find_grid_pos(grid_layout, box_id):
 
 
 def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
-                   used_labels=None, deferred_labels=None):
+                   used_label_extents=None, deferred_labels=None):
     """Draw a connector between two boxes, routing around obstacles."""
     from_pos = box_positions[from_id]
     to_pos = box_positions[to_id]
@@ -295,10 +295,34 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
     def place_label(r, c, text):
         if not text:
             return
-        if used_labels is not None:
-            while (r, c) in used_labels:
-                r += 1
-            used_labels.add((r, c))
+
+        def is_clear(lr, lc, length):
+            # Check against other label extents
+            if used_label_extents is not None:
+                for (er, ec_start, ec_end) in used_label_extents:
+                    if lr == er and lc < ec_end and lc + length > ec_start:
+                        return False
+            # Check against box positions
+            for bid, (bt, bl, bw, bh) in box_positions.items():
+                if bt <= lr < bt + bh and lc < bl + bw and lc + length > bl:
+                    return False
+            return True
+
+        # Try original position, then 4 alternates
+        candidates = [
+            (r, c),
+            (r, c + 2),
+            (r - 1, c),
+            (r + 1, c),
+            (r, c - len(text) - 2),
+        ]
+        for cr, cc in candidates:
+            if cr >= 0 and cc >= 0 and is_clear(cr, cc, len(text)):
+                r, c = cr, cc
+                break
+
+        if used_label_extents is not None:
+            used_label_extents.add((r, c, c + len(text)))
         if deferred_labels is not None:
             deferred_labels.append((r, c, text))
         else:
