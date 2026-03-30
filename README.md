@@ -1,39 +1,82 @@
 # perfect-ascii
 
-A Claude skill for creating perfectly aligned ASCII diagrams using a CLI-based rendering engine.
+MCP server for rendering perfectly aligned ASCII diagrams.
 
-## How it works
+## What it does
 
-Instead of asking the LLM to draw ASCII directly (which leads to character-counting errors), this skill splits the work:
+Exposes a `render_ascii` tool that takes structured JSON and returns pixel-perfect ASCII art. Supports flowcharts, tables, architecture diagrams, and sequence diagrams.
 
-- **SKILL.md** teaches Claude to describe diagrams as structured JSON
-- **bin/ascii-render** is a Python CLI that takes that JSON and outputs pixel-perfect ASCII
+LLMs can't count characters. This tool handles precise alignment so the LLM only needs to describe *what* to draw, not *how* to draw it.
 
-Claude handles the creative/semantic decisions (what goes where), and the CLI handles precise character placement.
+## Install
 
-## Modes
+### Claude Desktop
 
-- **diagram** — flowcharts, ER diagrams, state machines, block diagrams
-- **table** — data grids, comparison matrices, with auto-split at 78 chars
-- **layers** — layered architecture diagrams with bus connectors
-- **sequence** — sequence diagrams with lifelines and message arrows
-
-## Structure
-
-```
-SKILL.md              # Skill instructions for Claude
-bin/ascii-render      # Python CLI renderer (stdin JSON → stdout ASCII)
-bench/
-  scenarios.md        # Benchmark prompts (v1)
-  scenarios-v2.md     # Benchmark prompts (v2)
-  render.html         # HTML template for monospace rendering
-  eval-guide.md       # Evaluation scoring guide
+```bash
+git clone https://github.com/bassimehdi/perfect-ascii.git
+cd perfect-ascii
+pip install .
 ```
 
-## Usage
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "perfect-ascii": {
+      "command": "perfect-ascii"
+    }
+  }
+}
+```
+
+Restart Claude Desktop.
+
+### Claude Code
+
+```bash
+claude mcp add perfect-ascii -- perfect-ascii
+```
+
+Or with uv (no install needed):
+
+```bash
+claude mcp add perfect-ascii -- uv run --directory /path/to/perfect-ascii python server.py
+```
+
+## Tool Reference
+
+### `render_ascii`
+
+**Input:** `json_input` (string) — JSON describing the diagram.
+
+The JSON must contain exactly one top-level key that selects the mode:
+
+| Key | Use for |
+|-----|---------|
+| `diagram` | Flowcharts, ER diagrams, state machines, block diagrams |
+| `table` | Data grids, comparison matrices (auto-splits at 78 chars) |
+| `layers` | Layered architecture diagrams with bus connectors |
+| `sequence` | Sequence diagrams with lifelines and message arrows |
+
+**Output:** Plain text ASCII diagram, or an error message.
+
+**Constraints:** 78-column max width, rectangular boxes only, labels under ~15 chars.
+
+See the full tool docstring in `server.py` for detailed JSON format documentation and examples for each mode.
+
+## Development
+
+Run the rendering engine directly:
 
 ```bash
 cat <<'EOF' | python3 bin/ascii-render
 {"diagram": {"boxes": [{"id": "a", "label": "Hello"}, {"id": "b", "label": "World"}], "grid": [["a"], ["b"]], "connectors": [{"from": "a", "to": "b"}]}}
 EOF
 ```
+
+Run benchmarks — see `bench/eval-guide.md`.
+
+## License
+
+MIT
