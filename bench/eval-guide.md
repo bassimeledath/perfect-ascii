@@ -25,6 +25,7 @@ Create an HTML file for the diagram by copying `bench/render.html` and replacing
 Use Chrome DevTools MCP tools:
 1. `navigate_page` to `file:///absolute/path/to/bench/output/scenario-N.html`
 2. `take_screenshot` to capture the rendered diagram
+3. **Save a copy** of each screenshot to `/Users/bassime/Downloads/perfect-ascii-progress/i<N>-scenario-<M>.png` so progress is visible across iterations.
 
 ### Step 4: Analyze the screenshot
 
