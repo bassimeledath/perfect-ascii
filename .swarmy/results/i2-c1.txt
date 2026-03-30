@@ -1,0 +1,27 @@
+scenario_1: box=3 vert=4 horiz=4 conn=2 text=4 read=3 subtotal=20/30
+scenario_2: box=5 vert=5 horiz=5 conn=4 text=4 read=3 subtotal=26/30
+scenario_3: box=2 vert=4 horiz=4 conn=2 text=3 read=3 subtotal=18/30
+scenario_4: box=5 vert=5 horiz=5 conn=4 text=5 read=5 subtotal=29/30
+scenario_5: box=2 vert=3 horiz=3 conn=1 text=3 read=2 subtotal=14/30
+scenario_6: box=5 vert=5 horiz=5 conn=5 text=5 read=3 subtotal=28/30
+score=135/180
+
+notes:
+- CONNECTOR-THROUGH-BOX BUG PERSISTS: The v0.6.0 fix is incomplete. The L-shape
+  alternative routing (vertical-first path) does not check for intermediate boxes.
+  When the standard L-shape horizontal segment crosses a box, it falls back to
+  vertical-first routing, but that vertical segment can also cross boxes.
+  Affected: S1 (Inc Tries), S3 (Course), S5 (LISTEN, SYN_RCVD, CLOSE_W).
+- S2 SEQUENCE NOTE MISSING: The "Timeout 30s" note box between API Srv and PayGW
+  fails to render. The note_w check (note_w >= len(text) + 4) fails when actor
+  spacing is too narrow. Space is allocated (4 blank rows) but no box appears.
+- S5 LABEL OVERLAP: Multiple connector labels merge (e.g., "rcv ACKclose") when
+  connectors exit from the same box side at the same row.
+- S4 LAYERS is the strongest mode -- bus connectors, centering, and layer labels
+  all work very well. Minor: 4-to-3 index matching drops the 4th service box.
+- S6 TABLE auto-split works correctly. Alignment within sub-tables is perfect.
+  Header spanning uses empty cells rather than visual spanning, which is acceptable
+  but not ideal. The split reduces cross-referencing readability.
+- SEQUENCE MODE (new in v0.6.0) works well for the basic flow -- lifelines are
+  perfectly vertical, arrows connect to correct lifelines, dashed/solid styles
+  are distinguishable. The note rendering is the only issue.
