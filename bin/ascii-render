@@ -636,6 +636,25 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
 # Table mode
 # ---------------------------------------------------------------------------
 
+def _cell_text(cell):
+    """Extract text from a cell (plain string or {"text": ..., "span": N})."""
+    if isinstance(cell, dict):
+        return str(cell.get('text', ''))
+    return str(cell)
+
+
+def _cell_span(cell):
+    """Extract span from a cell (default 1)."""
+    if isinstance(cell, dict):
+        return cell.get('span', 1)
+    return 1
+
+
+def _row_logical_cols(row):
+    """Number of logical columns a row occupies (counting spans)."""
+    return sum(_cell_span(cell) for cell in row)
+
+
 def render_table(data):
     headers = data.get('headers', [])
     aligns = data.get('align', [])
@@ -651,22 +670,43 @@ def render_table(data):
     if not all_rows:
         return ''
 
-    num_cols = max(len(r) for r in all_rows)
+    num_cols = max(_row_logical_cols(r) for r in all_rows)
 
-    # Normalize rows
+    # Normalize rows to fill missing columns
     for r in all_rows:
-        while len(r) < num_cols:
+        while _row_logical_cols(r) < num_cols:
             r.append('')
 
     # Normalize aligns
     while len(aligns) < num_cols:
         aligns.append('left')
 
-    # Compute column widths
+    # Compute column widths - first pass: non-spanning cells only
     col_widths = [0] * num_cols
     for r in all_rows:
-        for ci, cell in enumerate(r):
-            col_widths[ci] = max(col_widths[ci], len(str(cell)))
+        ci = 0
+        for cell in r:
+            span = min(_cell_span(cell), num_cols - ci)
+            if span == 1:
+                col_widths[ci] = max(col_widths[ci], len(_cell_text(cell)))
+            ci += span
+
+    # Second pass: distribute extra width needed by spanning cells
+    for r in all_rows:
+        ci = 0
+        for cell in r:
+            span = min(_cell_span(cell), num_cols - ci)
+            if span > 1:
+                needed = len(_cell_text(cell))
+                # Available content width: col_widths + padding + internal separators
+                available = sum(col_widths[ci:ci+span]) + 3 * (span - 1)
+                if needed > available:
+                    extra = needed - available
+                    per_col = extra // span
+                    remainder = extra % span
+                    for s in range(span):
+                        col_widths[ci + s] += per_col + (1 if s < remainder else 0)
+            ci += span
 
     # Add padding (1 space each side)
     padded_widths = [w + 2 for w in col_widths]
@@ -680,52 +720,85 @@ def render_table(data):
 
     lines = []
 
-    def sep_line():
+    def _row_suppress(row_data):
+        """Column indices where + should be suppressed (internal to a span)."""
+        suppress = set()
+        ci = 0
+        for cell in row_data:
+            span = min(_cell_span(cell), num_cols - ci)
+            for s in range(1, span):
+                suppress.add(ci + s)
+            ci += span
+        return suppress
+
+    def sep_line(row_data=None):
+        suppress = _row_suppress(row_data) if row_data else set()
         parts = ['+']
-        for pw in padded_widths:
-            parts.append('-' * pw)
-            parts.append('+')
+        for ci in range(num_cols):
+            parts.append('-' * padded_widths[ci])
+            if (ci + 1) in suppress:
+                parts.append('-')
+            else:
+                parts.append('+')
         lines.append(''.join(parts))
 
     def data_line(row_data):
         parts = ['|']
-        for ci, cell in enumerate(row_data):
-            cell_str = str(cell)
-            w = padded_widths[ci] - 2  # content width
-            if aligns[ci] == 'right':
-                formatted = cell_str.rjust(w)
-            elif aligns[ci] == 'center':
-                formatted = cell_str.center(w)
+        ci = 0
+        for cell in row_data:
+            text = _cell_text(cell)
+            span = min(_cell_span(cell), num_cols - ci)
+            # Combined width: sum of spanned padded_widths + internal separators
+            combined_pw = sum(padded_widths[ci:ci+span]) + (span - 1)
+            w = combined_pw - 2  # content width
+            align = aligns[ci] if ci < len(aligns) else 'left'
+            if align == 'right':
+                formatted = text.rjust(w)
+            elif align == 'center':
+                formatted = text.center(w)
             else:
-                formatted = cell_str.ljust(w)
+                formatted = text.ljust(w)
             parts.append(' ' + formatted + ' ')
             parts.append('|')
+            ci += span
         lines.append(''.join(parts))
 
-    # Top border
-    sep_line()
+    # Collect all rendered rows for top/bottom border context
+    all_rendered = []
+    if headers:
+        all_rendered.extend(headers)
+    all_rendered.extend(rows)
+    if footer:
+        all_rendered.append(footer)
+    first_row = all_rendered[0] if all_rendered else None
+    last_row = all_rendered[-1] if all_rendered else None
+
+    # Top border (reflects first row)
+    sep_line(first_row)
 
     # Headers
     for hi, hrow in enumerate(headers):
         data_line(hrow)
 
-    # Separator after headers (if -1 in separator_after or after all headers)
+    # Separator after headers (reflects next row below)
     if -1 in separator_after or (headers and not separator_after):
-        sep_line()
+        next_row = rows[0] if rows else (footer if footer else None)
+        sep_line(next_row)
 
     # Data rows
     for ri, row in enumerate(rows):
         data_line(row)
         if ri in separator_after:
-            sep_line()
+            next_row = rows[ri + 1] if ri + 1 < len(rows) else (footer if footer else None)
+            sep_line(next_row)
 
     # Footer
     if footer:
-        sep_line()
+        sep_line(footer)
         data_line(footer)
 
-    # Bottom border
-    sep_line()
+    # Bottom border (reflects last row)
+    sep_line(last_row)
 
     return '\n'.join(lines)
 
@@ -741,6 +814,19 @@ def render_table_split(data, padded_widths, num_cols):
     while len(aligns) < num_cols:
         aligns.append('left')
 
+    # Compute safe split points (don't split within a span)
+    all_data_rows = headers + rows
+    if footer:
+        all_data_rows = all_data_rows + [footer]
+    safe_splits = set(range(1, num_cols))
+    for r in all_data_rows:
+        ci = 0
+        for cell in r:
+            span = _cell_span(cell)
+            for s in range(1, span):
+                safe_splits.discard(ci + s)
+            ci += span
+
     # Figure out how to split: first column is always included
     first_col_width = padded_widths[0] + 2  # +2 for the | borders
     splits = []
@@ -749,7 +835,7 @@ def render_table_split(data, padded_widths, num_cols):
 
     for ci in range(1, num_cols):
         needed = padded_widths[ci] + 1  # +1 for the | separator
-        if current_width + needed > MAX_WIDTH and len(current_group) > 1:
+        if current_width + needed > MAX_WIDTH and len(current_group) > 1 and ci in safe_splits:
             splits.append(current_group)
             current_group = [0]
             current_width = first_col_width
@@ -759,16 +845,28 @@ def render_table_split(data, padded_widths, num_cols):
     if current_group:
         splits.append(current_group)
 
+    def extract_cells(row, group):
+        """Extract cells from row whose start column is in the group."""
+        group_set = set(group)
+        result = []
+        ci = 0
+        for cell in row:
+            span = _cell_span(cell)
+            if ci in group_set:
+                result.append(cell)
+            ci += span
+        return result
+
     results = []
     for group in splits:
         sub_data = {
-            'headers': [[h[ci] if ci < len(h) else '' for ci in group] for h in headers],
+            'headers': [extract_cells(h, group) for h in headers],
             'align': [aligns[ci] for ci in group],
-            'rows': [[r[ci] if ci < len(r) else '' for ci in group] for r in rows],
+            'rows': [extract_cells(r, group) for r in rows],
             'separator_after': separator_after,
         }
         if footer:
-            sub_data['footer'] = [footer[ci] if ci < len(footer) else '' for ci in group]
+            sub_data['footer'] = extract_cells(footer, group)
         results.append(render_table(sub_data))
 
     return '\n\n'.join(results)
