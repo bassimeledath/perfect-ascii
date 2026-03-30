@@ -1,0 +1,8 @@
+scenario_1: box=3 vert=3 horiz=3 conn=2 text=3 read=2 subtotal=16/30
+scenario_2: box=4 vert=3 horiz=3 conn=2 text=3 read=3 subtotal=18/30
+scenario_3: box=4 vert=3 horiz=3 conn=3 text=4 read=3 subtotal=20/30
+scenario_4: box=4 vert=3 horiz=4 conn=3 text=4 read=4 subtotal=22/30
+scenario_5: box=3 vert=2 horiz=3 conn=2 text=3 read=2 subtotal=15/30
+scenario_6: box=4 vert=3 horiz=4 conn=4 text=2 read=4 subtotal=21/30
+score=112/180
+notes: S1: box collision where Grant access bottom merges with Verify code top (++ artifact). Loop-back connector crude. S2: no solid vs dashed arrow distinction for request/response. Lifeline spacing uneven. Some arrows miss destination lifelines. S3: cleanest diagram but Professor->Course arrow label placement awkward (1/N inline). S4: 4 service connectors going to 3 data boxes leaves one connector dangling. Otherwise clean. S5: worst score - CLOSING box cramped, bottom row with 3 adjacent state boxes is messy, many transitions hard to trace, vertical alignment breaks down in lower section. S6: numbers left-aligned instead of right-aligned per spec. Nested header spanning works but column alignment has minor wobbles.
