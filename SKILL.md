@@ -11,6 +11,13 @@ user_invocable: true
 
 When asked for an ASCII diagram, use the `ascii-render` CLI tool. **Never draw ASCII manually** -- always produce JSON and let the CLI handle alignment, box borders, and connectors.
 
+## Constraints
+
+- **78-column max width** — the renderer errors if output exceeds this.
+- **No merged table cells** — use `""` for blank placeholder cells instead.
+- **Rectangular boxes only** — no diamonds, circles, or other shapes.
+- **Long labels may need shortening** — keep labels under ~15 chars to fit.
+
 ## Step 1: Choose a mode
 
 - **Flowcharts, ER diagrams, block diagrams** -> `diagram` mode
@@ -75,7 +82,7 @@ Describe boxes in a grid with connectors between them. Use `body` for multi-line
 }
 ```
 
-- `headers`: multi-row headers supported. Use `""` for spanning cells.
+- `headers`: multi-row headers supported. Use `""` for blank placeholder cells.
 - `align`: per-column (`left`, `right`, `center`).
 - `separator_after`: row indices after which to draw a line. `-1` = after headers.
 - Auto-splits wide tables at 78 chars, repeating the first column.
@@ -145,7 +152,7 @@ Show the CLI output to the user in a fenced code block. Do not modify the output
 ## Tips
 
 - Keep labels short (< 15 chars). The CLI enforces 78-char max width.
-- For decision diamonds, use labels like `"Valid?"` and branch with labeled connectors.
+- For decision points, use labels like `"Valid?"` and branch with labeled connectors.
 - For ER diagrams, use `body` to list attributes.
 - If the CLI errors, check your JSON structure matches the examples above.
 - Place boxes intentionally in the grid -- `null` creates empty cells for spacing.

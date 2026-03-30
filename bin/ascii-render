@@ -2,7 +2,7 @@
 """ascii-render: pixel-perfect ASCII diagram renderer.
 
 Reads JSON from stdin, writes ASCII to stdout.
-Three modes: diagram, table, layers.
+Four modes: diagram, table, layers, sequence.
 """
 
 import json
@@ -32,15 +32,6 @@ class Grid:
         self.ensure(r, c)
         self.rows[r][c] = ch
 
-    def get(self, r, c):
-        if r < 0 or c < 0:
-            return ' '
-        if r >= len(self.rows):
-            return ' '
-        if c >= len(self.rows[r]):
-            return ' '
-        return self.rows[r][c]
-
     def put_str(self, r, c, s):
         for i, ch in enumerate(s):
             self.put(r, c + i, ch)
@@ -60,11 +51,10 @@ class Grid:
 # Box renderer
 # ---------------------------------------------------------------------------
 
-def draw_box(grid, top, left, width, height, label, body=None):
+def draw_box(grid, top, left, width, label, body=None):
     """Draw a box onto the grid.
 
     width includes the border chars (minimum 2 for +...+).
-    height includes the border rows.
     """
     inner = width - 2  # space between | and |
 
@@ -251,7 +241,7 @@ def render_diagram(data):
                 offset_x = (cell_w - bw) // 2
                 bx = x_positions[ci] + offset_x
                 by = y_positions[ri]
-                draw_box(g, by, bx, bw, bh, b['label'], b.get('body'))
+                draw_box(g, by, bx, bw, b['label'], b.get('body'))
                 box_positions[cell] = (by, bx, bw, bh)
 
     # Draw connectors (lines first, then labels on top)
@@ -477,7 +467,7 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
 
             # Vertical from source to detour
             if detour_r < ft:
-                v_start = ft
+                v_start = ft - 1
             else:
                 v_start = ft + fh
             for r in range(min(v_start, detour_r), max(v_start, detour_r) + 1):
@@ -693,8 +683,6 @@ def render_table(data):
 
     # Headers
     for hi, hrow in enumerate(headers):
-        while len(hrow) < num_cols:
-            hrow.append('')
         data_line(hrow)
 
     # Separator after headers (if -1 in separator_after or after all headers)
@@ -703,8 +691,6 @@ def render_table(data):
 
     # Data rows
     for ri, row in enumerate(rows):
-        while len(row) < num_cols:
-            row.append('')
         data_line(row)
         if ri in separator_after:
             sep_line()
@@ -712,8 +698,6 @@ def render_table(data):
     # Footer
     if footer:
         sep_line()
-        while len(footer) < num_cols:
-            footer.append('')
         data_line(footer)
 
     # Bottom border
@@ -808,7 +792,7 @@ def render_layers(data):
         box_positions = []
         x = start_x
         for bi, (lbl_text, bw, bh) in enumerate(zip(boxes, widths, heights)):
-            draw_box(g, y, x, bw, bh, lbl_text)
+            draw_box(g, y, x, bw, lbl_text)
             box_positions.append((x, bw, bh))
             x += bw + spacing
 
@@ -835,62 +819,25 @@ def render_layers(data):
             top_centers = [x + w // 2 for x, w, h in top_boxes]
             bot_centers = [x + w // 2 for x, w, h in bot_boxes]
 
-            if len(top_boxes) == 1 and len(bot_boxes) == 1:
-                tc = top_centers[0]
-                bc = bot_centers[0]
-                if tc == bc:
-                    for r in range(gap_start, gap_end + 1):
-                        g.put(r, tc, '|')
-                    g.put(gap_end, tc, 'v')
-                else:
-                    for r in range(gap_start, mid_row):
-                        g.put(r, tc, '|')
-                    min_c = min(tc, bc)
-                    max_c = max(tc, bc)
-                    for c in range(min_c, max_c + 1):
-                        g.put(mid_row, c, '-')
-                    g.put(mid_row, tc, '+')
-                    g.put(mid_row, bc, '+')
-                    for r in range(mid_row + 1, gap_end + 1):
-                        g.put(r, bc, '|')
-                    g.put(gap_end, bc, 'v')
-
-            elif len(top_boxes) == 1:
-                # Fan-out: bus pattern
-                src_col = top_centers[0]
-                left_c = min(bot_centers)
-                right_c = max(bot_centers)
-                for r in range(gap_start, mid_row):
-                    g.put(r, src_col, '|')
-                for c in range(left_c, right_c + 1):
-                    g.put(mid_row, c, '-')
-                g.put(mid_row, src_col, '+')
-                for bc in bot_centers:
-                    g.put(mid_row, bc, '+')
-                for bc in bot_centers:
-                    for r in range(mid_row + 1, gap_end + 1):
-                        g.put(r, bc, '|')
-                    g.put(gap_end, bc, 'v')
-
-            elif len(bot_boxes) == 1:
-                # Fan-in: bus pattern
-                dst_col = bot_centers[0]
-                left_c = min(top_centers)
-                right_c = max(top_centers)
+            if (len(top_boxes) == 1) != (len(bot_boxes) == 1):
+                # Bus pattern for fan-out (1:N) or fan-in (N:1)
+                all_centers = top_centers + bot_centers
+                left_c = min(all_centers)
+                right_c = max(all_centers)
                 for tc in top_centers:
                     for r in range(gap_start, mid_row):
                         g.put(r, tc, '|')
                 for c in range(left_c, right_c + 1):
                     g.put(mid_row, c, '-')
-                g.put(mid_row, dst_col, '+')
-                for tc in top_centers:
-                    g.put(mid_row, tc, '+')
-                for r in range(mid_row + 1, gap_end + 1):
-                    g.put(r, dst_col, '|')
-                g.put(gap_end, dst_col, 'v')
+                for center in all_centers:
+                    g.put(mid_row, center, '+')
+                for bc in bot_centers:
+                    for r in range(mid_row + 1, gap_end + 1):
+                        g.put(r, bc, '|')
+                    g.put(gap_end, bc, 'v')
 
             else:
-                # N to N: match by index
+                # N:N (including 1:1): match by index
                 for i in range(min(len(top_boxes), len(bot_boxes))):
                     tc = top_centers[i]
                     bc = bot_centers[i]
@@ -958,7 +905,7 @@ def render_sequence(data):
     for i, actor in enumerate(actors):
         w = actor_widths[i]
         left = centers[i] - w // 2
-        draw_box(g, 0, left, w, 3, actor)
+        draw_box(g, 0, left, w, actor)
 
     # Build timeline: messages with notes interleaved after specified indices
     note_map = {}
@@ -1059,7 +1006,7 @@ def _draw_seq_note(g, centers, actors, note, y):
         return  # too narrow for any note
     if note_w < len(text) + 4:
         text = text[:note_w - 4]
-    draw_box(g, y, left_x, note_w, 3, text)
+    draw_box(g, y, left_x, note_w, text)
 
 
 # ---------------------------------------------------------------------------
@@ -1085,16 +1032,15 @@ def main():
         print('Error: JSON must contain a "diagram", "table", "layers", or "sequence" key.', file=sys.stderr)
         sys.exit(1)
 
-    # Width enforcement
+    # Width enforcement — fail fast if any line exceeds the limit
     lines = result.split('\n')
-    enforced = []
-    for line in lines:
+    for i, line in enumerate(lines):
         if len(line) > MAX_WIDTH:
-            enforced.append(line[:MAX_WIDTH])
-        else:
-            enforced.append(line)
+            print('Error: Line {} is {} chars wide (max {}). Shorten labels or reduce columns.'.format(
+                i + 1, len(line), MAX_WIDTH), file=sys.stderr)
+            sys.exit(1)
 
-    print('\n'.join(enforced))
+    print(result)
 
 
 if __name__ == '__main__':
