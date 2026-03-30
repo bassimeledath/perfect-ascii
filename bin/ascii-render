@@ -161,6 +161,14 @@ def render_diagram(data):
     boxes_list = data.get('boxes', [])
     grid_layout = data.get('grid', [])
     connectors = data.get('connectors', [])
+    lanes = data.get('lanes', [])
+
+    # Compute lane label margin
+    lane_margin = 0
+    if lanes:
+        max_lane_len = max((len(l) for l in lanes), default=0)
+        if max_lane_len > 0:
+            lane_margin = max_lane_len + 3  # "label | "
 
     # Build box lookup
     box_map = {}
@@ -201,13 +209,13 @@ def render_diagram(data):
 
     # Check width and reduce spacing if needed
     total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
-    if total_w > MAX_WIDTH and col_spacing > 1:
+    if total_w + lane_margin > MAX_WIDTH and col_spacing > 1:
         col_spacing = 1
         total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
 
     # Compute positions
     x_positions = []  # left x for each column
-    x = 0
+    x = lane_margin
     for ci in range(num_cols):
         x_positions.append(x)
         x += col_widths[ci] + col_spacing
@@ -225,7 +233,7 @@ def render_diagram(data):
 
     # Title
     if title:
-        g.put_str(0, 0, title)
+        g.put_str(0, lane_margin, title)
 
     # Record box positions for connector routing
     box_positions = {}  # id -> (top, left, width, height)
@@ -244,8 +252,17 @@ def render_diagram(data):
                 draw_box(g, by, bx, bw, b['label'], b.get('body'))
                 box_positions[cell] = (by, bx, bw, bh)
 
+    # Draw lane labels
+    if lanes:
+        max_ll = max((len(l) for l in lanes), default=0)
+        for ri in range(num_rows):
+            if ri < len(lanes) and lanes[ri]:
+                label_y = y_positions[ri] + row_heights[ri] // 2
+                g.put_str(label_y, 0, lanes[ri].rjust(max_ll))
+                g.put_str(label_y, max_ll + 1, '|')
+
     # Draw connectors (lines first, then labels on top)
-    used_labels = set()
+    used_label_extents = set()
     deferred_labels = []
     for conn in connectors:
         from_id = conn['from']
@@ -256,7 +273,7 @@ def render_diagram(data):
             continue
 
         draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
-                       used_labels, deferred_labels)
+                       used_label_extents, deferred_labels)
 
     for lr, lc, ltext in deferred_labels:
         g.put_str(lr, lc, ltext)
@@ -274,7 +291,7 @@ def find_grid_pos(grid_layout, box_id):
 
 
 def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
-                   used_labels=None, deferred_labels=None):
+                   used_label_extents=None, deferred_labels=None):
     """Draw a connector between two boxes, routing around obstacles."""
     from_pos = box_positions[from_id]
     to_pos = box_positions[to_id]
@@ -295,10 +312,47 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
     def place_label(r, c, text):
         if not text:
             return
-        if used_labels is not None:
-            while (r, c) in used_labels:
-                r += 1
-            used_labels.add((r, c))
+
+        def is_clear(lr, lc, length):
+            # Check against other label extents
+            if used_label_extents is not None:
+                for (er, ec_start, ec_end) in used_label_extents:
+                    if lr == er and lc < ec_end and lc + length > ec_start:
+                        return False
+            # Check against box positions
+            for bid, (bt, bl, bw, bh) in box_positions.items():
+                if bt <= lr < bt + bh and lc < bl + bw and lc + length > bl:
+                    return False
+            return True
+
+        # Try original position, then nearby alternates
+        candidates = [
+            (r, c),
+            (r, c + 1),
+            (r, c + 2),
+            (r - 1, c),
+            (r + 1, c),
+            (r, c - len(text) - 1),
+            (r, c - len(text) - 2),
+            (r - 1, c + 2),
+            (r + 1, c + 2),
+            (r - 2, c),
+            (r + 2, c),
+            (r - 1, c - len(text) - 1),
+            (r + 1, c - len(text) - 1),
+        ]
+        placed = False
+        for cr, cc in candidates:
+            if cr >= 0 and cc >= 0 and is_clear(cr, cc, len(text)):
+                r, c = cr, cc
+                placed = True
+                break
+
+        if not placed:
+            return  # Skip label rather than overwrite boxes
+
+        if used_label_extents is not None:
+            used_label_extents.add((r, c, c + len(text)))
         if deferred_labels is not None:
             deferred_labels.append((r, c, text))
         else:
@@ -612,6 +666,25 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
 # Table mode
 # ---------------------------------------------------------------------------
 
+def _cell_text(cell):
+    """Extract text from a cell (plain string or {"text": ..., "span": N})."""
+    if isinstance(cell, dict):
+        return str(cell.get('text', ''))
+    return str(cell)
+
+
+def _cell_span(cell):
+    """Extract span from a cell (default 1)."""
+    if isinstance(cell, dict):
+        return cell.get('span', 1)
+    return 1
+
+
+def _row_logical_cols(row):
+    """Number of logical columns a row occupies (counting spans)."""
+    return sum(_cell_span(cell) for cell in row)
+
+
 def render_table(data):
     headers = data.get('headers', [])
     aligns = data.get('align', [])
@@ -627,22 +700,43 @@ def render_table(data):
     if not all_rows:
         return ''
 
-    num_cols = max(len(r) for r in all_rows)
+    num_cols = max(_row_logical_cols(r) for r in all_rows)
 
-    # Normalize rows
+    # Normalize rows to fill missing columns
     for r in all_rows:
-        while len(r) < num_cols:
+        while _row_logical_cols(r) < num_cols:
             r.append('')
 
     # Normalize aligns
     while len(aligns) < num_cols:
         aligns.append('left')
 
-    # Compute column widths
+    # Compute column widths - first pass: non-spanning cells only
     col_widths = [0] * num_cols
     for r in all_rows:
-        for ci, cell in enumerate(r):
-            col_widths[ci] = max(col_widths[ci], len(str(cell)))
+        ci = 0
+        for cell in r:
+            span = min(_cell_span(cell), num_cols - ci)
+            if span == 1:
+                col_widths[ci] = max(col_widths[ci], len(_cell_text(cell)))
+            ci += span
+
+    # Second pass: distribute extra width needed by spanning cells
+    for r in all_rows:
+        ci = 0
+        for cell in r:
+            span = min(_cell_span(cell), num_cols - ci)
+            if span > 1:
+                needed = len(_cell_text(cell))
+                # Available content width: col_widths + padding + internal separators
+                available = sum(col_widths[ci:ci+span]) + 3 * (span - 1)
+                if needed > available:
+                    extra = needed - available
+                    per_col = extra // span
+                    remainder = extra % span
+                    for s in range(span):
+                        col_widths[ci + s] += per_col + (1 if s < remainder else 0)
+            ci += span
 
     # Add padding (1 space each side)
     padded_widths = [w + 2 for w in col_widths]
@@ -656,52 +750,85 @@ def render_table(data):
 
     lines = []
 
-    def sep_line():
+    def _row_suppress(row_data):
+        """Column indices where + should be suppressed (internal to a span)."""
+        suppress = set()
+        ci = 0
+        for cell in row_data:
+            span = min(_cell_span(cell), num_cols - ci)
+            for s in range(1, span):
+                suppress.add(ci + s)
+            ci += span
+        return suppress
+
+    def sep_line(row_data=None):
+        suppress = _row_suppress(row_data) if row_data else set()
         parts = ['+']
-        for pw in padded_widths:
-            parts.append('-' * pw)
-            parts.append('+')
+        for ci in range(num_cols):
+            parts.append('-' * padded_widths[ci])
+            if (ci + 1) in suppress:
+                parts.append('-')
+            else:
+                parts.append('+')
         lines.append(''.join(parts))
 
     def data_line(row_data):
         parts = ['|']
-        for ci, cell in enumerate(row_data):
-            cell_str = str(cell)
-            w = padded_widths[ci] - 2  # content width
-            if aligns[ci] == 'right':
-                formatted = cell_str.rjust(w)
-            elif aligns[ci] == 'center':
-                formatted = cell_str.center(w)
+        ci = 0
+        for cell in row_data:
+            text = _cell_text(cell)
+            span = min(_cell_span(cell), num_cols - ci)
+            # Combined width: sum of spanned padded_widths + internal separators
+            combined_pw = sum(padded_widths[ci:ci+span]) + (span - 1)
+            w = combined_pw - 2  # content width
+            align = aligns[ci] if ci < len(aligns) else 'left'
+            if align == 'right':
+                formatted = text.rjust(w)
+            elif align == 'center':
+                formatted = text.center(w)
             else:
-                formatted = cell_str.ljust(w)
+                formatted = text.ljust(w)
             parts.append(' ' + formatted + ' ')
             parts.append('|')
+            ci += span
         lines.append(''.join(parts))
 
-    # Top border
-    sep_line()
+    # Collect all rendered rows for top/bottom border context
+    all_rendered = []
+    if headers:
+        all_rendered.extend(headers)
+    all_rendered.extend(rows)
+    if footer:
+        all_rendered.append(footer)
+    first_row = all_rendered[0] if all_rendered else None
+    last_row = all_rendered[-1] if all_rendered else None
+
+    # Top border (reflects first row)
+    sep_line(first_row)
 
     # Headers
     for hi, hrow in enumerate(headers):
         data_line(hrow)
 
-    # Separator after headers (if -1 in separator_after or after all headers)
+    # Separator after headers (reflects next row below)
     if -1 in separator_after or (headers and not separator_after):
-        sep_line()
+        next_row = rows[0] if rows else (footer if footer else None)
+        sep_line(next_row)
 
     # Data rows
     for ri, row in enumerate(rows):
         data_line(row)
         if ri in separator_after:
-            sep_line()
+            next_row = rows[ri + 1] if ri + 1 < len(rows) else (footer if footer else None)
+            sep_line(next_row)
 
     # Footer
     if footer:
-        sep_line()
+        sep_line(footer)
         data_line(footer)
 
-    # Bottom border
-    sep_line()
+    # Bottom border (reflects last row)
+    sep_line(last_row)
 
     return '\n'.join(lines)
 
@@ -717,6 +844,19 @@ def render_table_split(data, padded_widths, num_cols):
     while len(aligns) < num_cols:
         aligns.append('left')
 
+    # Compute safe split points (don't split within a span)
+    all_data_rows = headers + rows
+    if footer:
+        all_data_rows = all_data_rows + [footer]
+    safe_splits = set(range(1, num_cols))
+    for r in all_data_rows:
+        ci = 0
+        for cell in r:
+            span = _cell_span(cell)
+            for s in range(1, span):
+                safe_splits.discard(ci + s)
+            ci += span
+
     # Figure out how to split: first column is always included
     first_col_width = padded_widths[0] + 2  # +2 for the | borders
     splits = []
@@ -725,7 +865,7 @@ def render_table_split(data, padded_widths, num_cols):
 
     for ci in range(1, num_cols):
         needed = padded_widths[ci] + 1  # +1 for the | separator
-        if current_width + needed > MAX_WIDTH and len(current_group) > 1:
+        if current_width + needed > MAX_WIDTH and len(current_group) > 1 and ci in safe_splits:
             splits.append(current_group)
             current_group = [0]
             current_width = first_col_width
@@ -735,16 +875,28 @@ def render_table_split(data, padded_widths, num_cols):
     if current_group:
         splits.append(current_group)
 
+    def extract_cells(row, group):
+        """Extract cells from row whose start column is in the group."""
+        group_set = set(group)
+        result = []
+        ci = 0
+        for cell in row:
+            span = _cell_span(cell)
+            if ci in group_set:
+                result.append(cell)
+            ci += span
+        return result
+
     results = []
     for group in splits:
         sub_data = {
-            'headers': [[h[ci] if ci < len(h) else '' for ci in group] for h in headers],
+            'headers': [extract_cells(h, group) for h in headers],
             'align': [aligns[ci] for ci in group],
-            'rows': [[r[ci] if ci < len(r) else '' for ci in group] for r in rows],
+            'rows': [extract_cells(r, group) for r in rows],
             'separator_after': separator_after,
         }
         if footer:
-            sub_data['footer'] = [footer[ci] if ci < len(footer) else '' for ci in group]
+            sub_data['footer'] = extract_cells(footer, group)
         results.append(render_table(sub_data))
 
     return '\n\n'.join(results)

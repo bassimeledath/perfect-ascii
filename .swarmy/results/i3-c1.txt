@@ -1,22 +1,75 @@
-scenario_1: box=5 vert=4 horiz=4 conn=4 text=5 read=4 subtotal=26/30
-scenario_2: box=5 vert=4 horiz=4 conn=4 text=4 read=4 subtotal=25/30
-scenario_3: box=5 vert=4 horiz=4 conn=4 text=5 read=4 subtotal=26/30
-scenario_4: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
-scenario_5: box=5 vert=4 horiz=4 conn=3 text=4 read=3 subtotal=23/30
-scenario_6: box=5 vert=5 horiz=5 conn=5 text=4 read=3 subtotal=27/30
-score=157/180
+# v2 swarmy run — iteration 3 (lane hints + connector polish)
+# Tested: 2026-03-29, FINAL evaluation of all 12 scenarios
 
-notes:
-- S1: All 12 boxes render cleanly with perfect closure. Connectors route properly including L-shapes and detours around obstacles. Missing loop-back connectors (retry->creds, chk3 no->creds) but this is a JSON input gap, not a rendering defect. Text centering is perfect in all boxes.
-- S2: 5 actors with lifelines, 10 messages with solid/dashed arrows. Note box text truncated from "Timeout 30s" to "Timeout" due to narrow spacing between lifelines. All lifelines vertically aligned. Dashed arrows now visually distinct from solid (alternating dash-space pattern). Arrows connect to correct lifelines.
-- S3: 5 ER entities with body fields rendered with separator lines. Department-to-Course connector properly routes around Professor box via detour column with collision detection. All relationship labels (1:N) positioned correctly. No diagonal chars -- all turns use + elbows.
-- S4: Best scenario. Layers mode produces near-perfect output. Fan-in (3->1), fan-out (1->4), and N-to-N (4->3) bus connectors all render cleanly. Layer labels properly right-aligned in separate margin column with | separator. Perfect alignment throughout. 30/30.
-- S5: Most complex scenario (12 boxes, 14 connectors). All boxes render correctly with + elbows (no diagonal /\ chars). Dense connector routing creates label proximity issues -- "rcv ACK" appears 4 times for different transitions, making it hard to trace individual paths. The closing sequence (FIN_WAIT_1/2, CLOSING, LAST_ACK, TIME_WAIT) is particularly dense. Connector routing improved over prior version but readability still suffers from density.
-- S6: Table auto-splits into two tables at 78-char limit, repeating Region column. Column alignment within each sub-table is perfect. Header spanning not visually apparent (Q1 2025 sits in one cell, adjacent Growth cell is empty rather than visually merged). Numbers right-aligned correctly. Split hurts at-a-glance readability.
+## v1 scenarios
 
-improvement vs prior (i3 old=127/180 -> i3 new=157/180, +30):
-- Fixed S5 diagonal /\ chars -> all + elbows now (+7)
-- Fixed S4 layer label alignment and bus connectors (+9)
-- Improved S1 connector routing with collision detection (+5)
-- Improved S2 dashed arrow distinction (+4)
-- Minor text centering improvements across all scenarios (+5)
+scenario_1 (flowchart): box=5 vert=3 horiz=4 conn=2 text=5 read=3 subtotal=22/30
+  Issues: connector pierces Valid? box border (line 14: |------| Valid? |),
+  || artifacts at 2FA On? box where multiple connectors overlap (lines 18-20),
+  label collisions around central routing area. Flow followable but cluttered.
+
+scenario_2 (sequence): box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Excellent. All 10 messages, 5 actors, note box, solid/dashed arrows.
+  Lifelines perfectly vertical. Clean professional diagram.
+
+scenario_3 (ER): box=5 vert=5 horiz=5 conn=4 text=5 read=4 subtotal=28/30
+  All 5 entities with body sections. All 5 relationships shown with 1:N labels.
+  Minor: connector exits from body row (Prof->Course through attribute line).
+  Cardinality as labels rather than dual-end markers.
+
+scenario_4 (architecture): box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Perfect. 4 layers, labels on left, bus fan-out/fan-in connectors.
+  All boxes horizontally aligned within layers.
+
+scenario_5 (state machine): box=5 vert=3 horiz=4 conn=2 text=5 read=3 subtotal=22/30
+  Issues: "rcv ACK rcv ACK" label collision on line 16 (SYN_RCVD->ESTAB
+  and SYN_SENT->ESTAB labels merge). || artifacts at ESTABLISHED box
+  (lines 18-19). timeout label overwrites box border. All 11 states present.
+
+scenario_6 (table): box=5 vert=5 horiz=5 conn=5 text=5 read=4 subtotal=29/30
+  Auto-split into two tables (quarterly + annual) due to 78-char width.
+  Split handled cleanly. Spanning headers work. Numbers right-aligned.
+  Minor readability reduction from split vs single view.
+
+v1_total=161/180
+
+## v2 scenarios
+
+scenario_7 (gantt): box=5 vert=5 horiz=5 conn=5 text=4 read=4 subtotal=28/30
+  Clean table structure. Bi-weekly periods fit 78 chars.
+  Bars (===, ==, =) represent durations but are visually thin.
+  Timeline reads left-to-right. Task/team labels clear.
+
+scenario_8 (binary tree): box=5 vert=5 horiz=5 conn=4 text=5 read=5 subtotal=29/30
+  All 15 BST nodes correctly laid out in 4 levels. Symmetric.
+  Nodes at same level perfectly horizontally aligned. Left < right ordering correct.
+  Minor: L-shape elbows route through box labels (+-----| 25 |------+).
+
+scenario_9 (packet): box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Perfect IPv4 packet header. Spans work correctly:
+  Identification (span 2), Header Checksum (span 2), Source/Dest IP (span 4).
+  Field names centered. All separator positions correct at span boundaries.
+
+scenario_10 (git graph): box=5 vert=4 horiz=5 conn=2 text=5 read=3 subtotal=24/30
+  Lane labels (main, auth, hotfix, ui) render correctly on left margin.
+  Issues: multiple label collisions — "merge|" concatenated with connector (lines 6,11),
+  "|-branch" collision near A3 (line 7), "--|---+" messy routing at H1 (line 12).
+  13-candidate label system not sufficient for dense connector areas.
+
+scenario_11 (matrix): box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+  Perfect comparison table. 12 features x 5 providers. Numbers centered.
+  Footer with totals. All data accurate. Clean borders.
+
+scenario_12 (pipeline): box=5 vert=4 horiz=5 conn=3 text=5 read=4 subtotal=26/30
+  Main pipeline Postgres->Spark->dbt->QualityChk->Snowflake is clean.
+  Sources (S3, Kafka) feed UPWARD into Spark via ^ which is non-standard.
+  Pass/fail branching works. Snowflake->Redis/Tableau detour routing is complex
+  but functional with +------+ vertical detour.
+
+v2_total=167/180
+
+## Summary
+
+v1_total=161/180
+v2_total=167/180
+score=328/360

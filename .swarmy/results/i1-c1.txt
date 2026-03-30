@@ -1,14 +1,34 @@
-scenario_1: box=2 vert=3 horiz=4 conn=1 text=2 read=2 subtotal=14/30
-scenario_2: box=5 vert=4 horiz=4 conn=4 text=4 read=2 subtotal=23/30
-scenario_3: box=5 vert=4 horiz=4 conn=3 text=4 read=4 subtotal=24/30
-scenario_4: box=5 vert=5 horiz=5 conn=4 text=5 read=5 subtotal=29/30
-scenario_5: box=1 vert=2 horiz=3 conn=1 text=1 read=1 subtotal=9/30
-scenario_6: box=5 vert=5 horiz=5 conn=4 text=5 read=3 subtotal=27/30
-score=126/180
+v1_scenario_1: box=5 vert=4 horiz=4 conn=3 text=4 read=3 subtotal=23/30
+v1_scenario_2: box=5 vert=5 horiz=5 conn=4 text=4 read=5 subtotal=28/30
+v1_scenario_3: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+v1_scenario_4: box=5 vert=5 horiz=5 conn=4 text=5 read=5 subtotal=29/30
+v1_scenario_5: box=3 vert=3 horiz=3 conn=2 text=3 read=2 subtotal=16/30
+v1_scenario_6: box=5 vert=5 horiz=5 conn=5 text=5 read=4 subtotal=29/30
+v2_scenario_1: box=5 vert=5 horiz=5 conn=5 text=5 read=4 subtotal=29/30
+v2_scenario_2: box=5 vert=5 horiz=5 conn=5 text=5 read=5 subtotal=30/30
+v2_scenario_3: box=5 vert=5 horiz=5 conn=5 text=4 read=3 subtotal=27/30
+v2_scenario_4: box=5 vert=4 horiz=5 conn=3 text=4 read=3 subtotal=24/30
+v2_scenario_5: box=5 vert=5 horiz=5 conn=5 text=5 read=4 subtotal=29/30
+v2_scenario_6: box=5 vert=4 horiz=4 conn=2 text=3 read=3 subtotal=21/30
+v1_total=155/180
+v2_total=160/180
+combined=315/360
+
 notes:
-- CRITICAL BUG: vertical connectors between boxes in the same column that skip rows (e.g. upward connector from lastack->closed, or gte3->creds) draw through ALL intermediate boxes, destroying their text labels. This is the #1 issue, causing catastrophic failures in scenarios 1 and 5.
-- CLI has no sequence diagram mode. Scenario 2 was approximated with diagram mode using L-shaped connectors. Result is functional but doesn't look like a sequence diagram (no lifelines, no dashed arrows, no actor alignment).
-- Layers mode (scenario 4) is the strongest — fan-in/fan-out bus connectors work well. Minor limitation: N-to-N connections between layers match by index, so if top layer has more boxes than bottom, some go unconnected.
-- Table mode (scenario 6) works well but auto-splits at 78 chars. Header spanning is fake (empty cells, not visual merge). Alignment within sub-tables is perfect.
-- L-shape connectors (different row AND column) work well — no text corruption.
-- Simple vertical connectors between adjacent rows work fine. Only connectors that skip intermediate rows cause corruption.
+- S5 (TCP State Machine) CRITICAL: CLOSING box content overwritten by connector routing.
+  The connector line (+---------------| LAST_ACK |) cuts through CLOSING's label row,
+  making the CLOSING state invisible. Two "rcv ACK" labels appear on the same line
+  (synrcvd->estab and lastack->closed routing), causing ambiguity.
+
+- S10/v2-S4 (Git Graph): A3 box itself is NOT overwritten (improvement over previous).
+  However "merge|" and "|-branch" labels crowd around A3/H1 area within a few characters.
+  Main branch M1->M7 is clean. Branch/merge topology identifiable but hard to trace.
+
+- S12/v2-S6 (Pipeline) CRITICAL: "fail" label placed on QC?->Redis connector
+  (|-fail---------->| Redis |). Should be "pass". The QC?->Alert+DLQ connector has
+  NO visible label — should have "fail". Labels on WRONG connectors.
+
+- Tables and simple diagrams (S3, S4, S6, S7, S8, S11) score 27-30. Excellent alignment.
+- Complex multi-connector diagrams (S5, S10, S12) score 16-24. Label routing struggles.
+- Sequence diagram (S2) works well at 28/30 — lifelines vertical, arrows clean.
+- Binary tree (S8) is perfect at 30/30 — symmetric, clean connectors.
