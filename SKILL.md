@@ -60,6 +60,33 @@ Describe boxes in a grid with connectors between them. Use `body` for multi-line
 - `grid`: 2D array of box IDs or `null` for empty cells. Each row is a horizontal layer.
 - `connectors`: `from`/`to` with optional `label`. Same-column = vertical line, same-row = horizontal, different = L-shape elbow.
 - `body`: optional list of strings for multi-line boxes (adds a separator between label and body).
+- `lanes`: optional list of row labels (e.g., branch names). Adds left-margin labels like layers mode.
+
+#### Lane-labeled diagrams (git graphs, pipelines)
+
+```json
+{
+  "diagram": {
+    "lanes": ["main", "feature"],
+    "boxes": [
+      {"id": "m1", "label": "v1.0"},
+      {"id": "m2", "label": "v1.1"},
+      {"id": "f1", "label": "auth"},
+      {"id": "f2", "label": "tests"}
+    ],
+    "grid": [
+      ["m1", null, "m2"],
+      [null, "f1", "f2"]
+    ],
+    "connectors": [
+      {"from": "m1", "to": "m2"},
+      {"from": "m1", "to": "f1", "label": "branch"},
+      {"from": "f1", "to": "f2"},
+      {"from": "f2", "to": "m2", "label": "merge"}
+    ]
+  }
+}
+```
 
 ### table mode
 

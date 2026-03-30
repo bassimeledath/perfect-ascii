@@ -161,6 +161,14 @@ def render_diagram(data):
     boxes_list = data.get('boxes', [])
     grid_layout = data.get('grid', [])
     connectors = data.get('connectors', [])
+    lanes = data.get('lanes', [])
+
+    # Compute lane label margin
+    lane_margin = 0
+    if lanes:
+        max_lane_len = max((len(l) for l in lanes), default=0)
+        if max_lane_len > 0:
+            lane_margin = max_lane_len + 3  # "label | "
 
     # Build box lookup
     box_map = {}
@@ -201,13 +209,13 @@ def render_diagram(data):
 
     # Check width and reduce spacing if needed
     total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
-    if total_w > MAX_WIDTH and col_spacing > 1:
+    if total_w + lane_margin > MAX_WIDTH and col_spacing > 1:
         col_spacing = 1
         total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
 
     # Compute positions
     x_positions = []  # left x for each column
-    x = 0
+    x = lane_margin
     for ci in range(num_cols):
         x_positions.append(x)
         x += col_widths[ci] + col_spacing
@@ -225,7 +233,7 @@ def render_diagram(data):
 
     # Title
     if title:
-        g.put_str(0, 0, title)
+        g.put_str(0, lane_margin, title)
 
     # Record box positions for connector routing
     box_positions = {}  # id -> (top, left, width, height)
@@ -243,6 +251,15 @@ def render_diagram(data):
                 by = y_positions[ri]
                 draw_box(g, by, bx, bw, b['label'], b.get('body'))
                 box_positions[cell] = (by, bx, bw, bh)
+
+    # Draw lane labels
+    if lanes:
+        max_ll = max((len(l) for l in lanes), default=0)
+        for ri in range(num_rows):
+            if ri < len(lanes) and lanes[ri]:
+                label_y = y_positions[ri] + row_heights[ri] // 2
+                g.put_str(label_y, 0, lanes[ri].rjust(max_ll))
+                g.put_str(label_y, max_ll + 1, '|')
 
     # Draw connectors (lines first, then labels on top)
     used_label_extents = set()
@@ -308,18 +325,31 @@ def draw_connector(g, box_positions, from_id, to_id, label, grid_layout,
                     return False
             return True
 
-        # Try original position, then 4 alternates
+        # Try original position, then nearby alternates
         candidates = [
             (r, c),
+            (r, c + 1),
             (r, c + 2),
             (r - 1, c),
             (r + 1, c),
+            (r, c - len(text) - 1),
             (r, c - len(text) - 2),
+            (r - 1, c + 2),
+            (r + 1, c + 2),
+            (r - 2, c),
+            (r + 2, c),
+            (r - 1, c - len(text) - 1),
+            (r + 1, c - len(text) - 1),
         ]
+        placed = False
         for cr, cc in candidates:
             if cr >= 0 and cc >= 0 and is_clear(cr, cc, len(text)):
                 r, c = cr, cc
+                placed = True
                 break
+
+        if not placed:
+            return  # Skip label rather than overwrite boxes
 
         if used_label_extents is not None:
             used_label_extents.add((r, c, c + len(text)))
