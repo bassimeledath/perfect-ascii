@@ -1,0 +1,684 @@
+#!/usr/bin/env python3
+"""ascii-render: pixel-perfect ASCII diagram renderer.
+
+Reads JSON from stdin, writes ASCII to stdout.
+Three modes: diagram, table, layers.
+"""
+
+import json
+import sys
+
+MAX_WIDTH = 78
+
+# ---------------------------------------------------------------------------
+# Character grid
+# ---------------------------------------------------------------------------
+
+class Grid:
+    """2D character grid that grows as needed."""
+
+    def __init__(self):
+        self.rows = []  # list of list of chars
+
+    def ensure(self, r, c):
+        while len(self.rows) <= r:
+            self.rows.append([])
+        while len(self.rows[r]) <= c:
+            self.rows[r].append(' ')
+
+    def put(self, r, c, ch):
+        if c < 0 or r < 0:
+            return
+        self.ensure(r, c)
+        self.rows[r][c] = ch
+
+    def get(self, r, c):
+        if r < 0 or c < 0:
+            return ' '
+        if r >= len(self.rows):
+            return ' '
+        if c >= len(self.rows[r]):
+            return ' '
+        return self.rows[r][c]
+
+    def put_str(self, r, c, s):
+        for i, ch in enumerate(s):
+            self.put(r, c + i, ch)
+
+    def render(self):
+        lines = []
+        for row in self.rows:
+            line = ''.join(row).rstrip()
+            lines.append(line)
+        # Strip trailing empty lines
+        while lines and lines[-1] == '':
+            lines.pop()
+        return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Box renderer
+# ---------------------------------------------------------------------------
+
+def draw_box(grid, top, left, width, height, label, body=None):
+    """Draw a box onto the grid.
+
+    width includes the border chars (minimum 2 for +...+).
+    height includes the border rows.
+    """
+    inner = width - 2  # space between | and |
+
+    # Top border
+    grid.put(top, left, '+')
+    for c in range(1, width - 1):
+        grid.put(top, left + c, '-')
+    grid.put(top, left + width - 1, '+')
+
+    # Label row (centered)
+    r = top + 1
+    pad_total = inner - len(label)
+    pad_left = pad_total // 2
+    grid.put(r, left, '|')
+    grid.put_str(r, left + 1, ' ' * pad_left + label + ' ' * (inner - pad_left - len(label)))
+    grid.put(r, left + width - 1, '|')
+
+    next_row = top + 2
+
+    if body is not None:
+        # Separator
+        grid.put(next_row, left, '+')
+        for c in range(1, width - 1):
+            grid.put(next_row, left + c, '-')
+        grid.put(next_row, left + width - 1, '+')
+        next_row += 1
+
+        # Body lines (left-aligned)
+        for line in body:
+            grid.put(next_row, left, '|')
+            text = ' ' + line
+            text = text + ' ' * (inner - len(text))
+            grid.put_str(next_row, left + 1, text)
+            grid.put(next_row, left + width - 1, '|')
+            next_row += 1
+
+    # Bottom border
+    grid.put(next_row, left, '+')
+    for c in range(1, width - 1):
+        grid.put(next_row, left + c, '-')
+    grid.put(next_row, left + width - 1, '+')
+
+
+def box_height(label, body=None):
+    """Compute the height of a box including borders."""
+    h = 3  # top border + label + bottom border
+    if body:
+        h += 1 + len(body)  # separator + body lines
+    return h
+
+
+def box_min_width(label, body=None):
+    """Compute the minimum width of a box including borders."""
+    max_content = len(label)
+    if body:
+        for line in body:
+            max_content = max(max_content, len(line))
+    return max_content + 4  # | + space + content + space + |
+
+
+# ---------------------------------------------------------------------------
+# Diagram mode
+# ---------------------------------------------------------------------------
+
+def render_diagram(data):
+    title = data.get('title', '')
+    boxes_list = data.get('boxes', [])
+    grid_layout = data.get('grid', [])
+    connectors = data.get('connectors', [])
+
+    # Build box lookup
+    box_map = {}
+    for b in boxes_list:
+        box_map[b['id']] = b
+
+    # Determine grid dimensions
+    num_rows = len(grid_layout)
+    num_cols = max((len(row) for row in grid_layout), default=0)
+
+    # Normalize grid rows to same length
+    for row in grid_layout:
+        while len(row) < num_cols:
+            row.append(None)
+
+    # Compute column widths and row heights
+    col_widths = [0] * num_cols
+    row_heights = [0] * num_rows
+    col_spacing = 3
+    row_spacing = 2
+
+    for ri, row in enumerate(grid_layout):
+        for ci, cell in enumerate(row):
+            if cell and cell in box_map:
+                b = box_map[cell]
+                bw = box_min_width(b['label'], b.get('body'))
+                bh = box_height(b['label'], b.get('body'))
+                col_widths[ci] = max(col_widths[ci], bw)
+                row_heights[ri] = max(row_heights[ri], bh)
+
+    # Ensure minimum sizes
+    for ci in range(num_cols):
+        if col_widths[ci] == 0:
+            col_widths[ci] = 6
+    for ri in range(num_rows):
+        if row_heights[ri] == 0:
+            row_heights[ri] = 3
+
+    # Check width and reduce spacing if needed
+    total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
+    if total_w > MAX_WIDTH and col_spacing > 1:
+        col_spacing = 1
+        total_w = sum(col_widths) + col_spacing * (num_cols - 1) if num_cols > 1 else sum(col_widths)
+
+    # Compute positions
+    x_positions = []  # left x for each column
+    x = 0
+    for ci in range(num_cols):
+        x_positions.append(x)
+        x += col_widths[ci] + col_spacing
+
+    y_positions = []  # top y for each row
+    y = 0
+    if title:
+        y = 2  # leave room for title
+    for ri in range(num_rows):
+        y_positions.append(y)
+        y += row_heights[ri] + row_spacing
+
+    # Draw
+    g = Grid()
+
+    # Title
+    if title:
+        g.put_str(0, 0, title)
+
+    # Record box positions for connector routing
+    box_positions = {}  # id -> (top, left, width, height)
+
+    for ri, row in enumerate(grid_layout):
+        for ci, cell in enumerate(row):
+            if cell and cell in box_map:
+                b = box_map[cell]
+                bw = box_min_width(b['label'], b.get('body'))
+                bh = box_height(b['label'], b.get('body'))
+                # Center the box within its grid cell
+                cell_w = col_widths[ci]
+                offset_x = (cell_w - bw) // 2
+                bx = x_positions[ci] + offset_x
+                by = y_positions[ri]
+                draw_box(g, by, bx, bw, bh, b['label'], b.get('body'))
+                box_positions[cell] = (by, bx, bw, bh)
+
+    # Draw connectors
+    for conn in connectors:
+        from_id = conn['from']
+        to_id = conn['to']
+        label = conn.get('label', '')
+
+        if from_id not in box_positions or to_id not in box_positions:
+            continue
+
+        draw_connector(g, box_positions, from_id, to_id, label, grid_layout)
+
+    return g.render()
+
+
+def find_grid_pos(grid_layout, box_id):
+    """Find the (row, col) of a box in the grid."""
+    for ri, row in enumerate(grid_layout):
+        for ci, cell in enumerate(row):
+            if cell == box_id:
+                return (ri, ci)
+    return None
+
+
+def draw_connector(g, box_positions, from_id, to_id, label, grid_layout):
+    """Draw a connector between two boxes."""
+    from_pos = box_positions[from_id]  # (top, left, width, height)
+    to_pos = box_positions[to_id]
+
+    from_grid = find_grid_pos(grid_layout, from_id)
+    to_grid = find_grid_pos(grid_layout, to_id)
+
+    if from_grid is None or to_grid is None:
+        return
+
+    from_gr, from_gc = from_grid
+    to_gr, to_gc = to_grid
+
+    ft, fl, fw, fh = from_pos
+    tt, tl, tw, th = to_pos
+
+    if from_gc == to_gc:
+        # Same column - vertical connector
+        if to_gr > from_gr:
+            # Going down
+            start_r = ft + fh  # row just below from-box bottom border
+            end_r = tt - 1     # row just above to-box top border
+            col = fl + fw // 2
+            for r in range(start_r, end_r + 1):
+                g.put(r, col, '|')
+            g.put(end_r, col, 'v')
+            if label:
+                g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+        else:
+            # Going up
+            start_r = tt + th
+            end_r = ft - 1
+            col = fl + fw // 2
+            for r in range(start_r, end_r + 1):
+                g.put(r, col, '|')
+            g.put(start_r, col, '^')
+            if label:
+                g.put_str(start_r + (end_r - start_r) // 2, col + 2, label)
+
+    elif from_gr == to_gr:
+        # Same row - horizontal connector
+        row = ft + fh // 2  # middle of the box
+        if to_gc > from_gc:
+            # Going right
+            start_c = fl + fw
+            end_c = tl - 1
+            for c in range(start_c, end_c + 1):
+                g.put(row, c, '-')
+            g.put(row, end_c, '>')
+            if label:
+                mid_c = start_c + (end_c - start_c) // 2 - len(label) // 2
+                g.put_str(row - 1, mid_c, label)
+        else:
+            # Going left
+            start_c = tl + tw
+            end_c = fl - 1
+            row = ft + fh // 2
+            for c in range(start_c, end_c + 1):
+                g.put(row, c, '-')
+            g.put(start_c, '<')
+            if label:
+                mid_c = start_c + (end_c - start_c) // 2 - len(label) // 2
+                g.put_str(row - 1, mid_c, label)
+
+    else:
+        # Different row and column - L-shape: exit from side, then vertical
+        going_right = to_gc > from_gc
+        going_down = to_gr > from_gr
+
+        # Exit from side of source box at its middle row
+        exit_r = ft + fh // 2
+        if going_right:
+            exit_c = fl + fw      # column after right border
+        else:
+            exit_c = fl - 1       # column before left border
+
+        # Entry at top/bottom center of target box
+        entry_c = tl + tw // 2
+        if going_down:
+            entry_r = tt - 1      # row above target top border
+        else:
+            entry_r = tt + th     # row below target bottom border
+
+        # Draw horizontal segment
+        min_c = min(exit_c, entry_c)
+        max_c = max(exit_c, entry_c)
+        for c in range(min_c, max_c + 1):
+            g.put(exit_r, c, '-')
+
+        # Draw turn point
+        g.put(exit_r, entry_c, '+')
+
+        # Draw vertical segment + arrow
+        if going_down:
+            for r in range(exit_r + 1, entry_r + 1):
+                g.put(r, entry_c, '|')
+            g.put(entry_r, entry_c, 'v')
+        else:
+            for r in range(entry_r, exit_r):
+                g.put(r, entry_c, '|')
+            g.put(entry_r, entry_c, '^')
+
+        # Label above the horizontal segment near the exit
+        if label:
+            if going_right:
+                g.put_str(exit_r - 1, exit_c + 1, label)
+            else:
+                g.put_str(exit_r - 1, exit_c - len(label), label)
+
+
+# ---------------------------------------------------------------------------
+# Table mode
+# ---------------------------------------------------------------------------
+
+def render_table(data):
+    headers = data.get('headers', [])
+    aligns = data.get('align', [])
+    rows = data.get('rows', [])
+    separator_after = data.get('separator_after', [])
+    footer = data.get('footer', None)
+
+    # Gather all rows for width computation
+    all_rows = headers + rows
+    if footer:
+        all_rows = all_rows + [footer]
+
+    if not all_rows:
+        return ''
+
+    num_cols = max(len(r) for r in all_rows)
+
+    # Normalize rows
+    for r in all_rows:
+        while len(r) < num_cols:
+            r.append('')
+
+    # Normalize aligns
+    while len(aligns) < num_cols:
+        aligns.append('left')
+
+    # Compute column widths
+    col_widths = [0] * num_cols
+    for r in all_rows:
+        for ci, cell in enumerate(r):
+            col_widths[ci] = max(col_widths[ci], len(str(cell)))
+
+    # Add padding (1 space each side)
+    padded_widths = [w + 2 for w in col_widths]
+
+    # Total width including separators
+    total_width = sum(padded_widths) + num_cols + 1
+
+    # Auto-split if too wide
+    if total_width > MAX_WIDTH and num_cols > 2:
+        return render_table_split(data, padded_widths, num_cols)
+
+    lines = []
+
+    def sep_line():
+        parts = ['+']
+        for pw in padded_widths:
+            parts.append('-' * pw)
+            parts.append('+')
+        lines.append(''.join(parts))
+
+    def data_line(row_data):
+        parts = ['|']
+        for ci, cell in enumerate(row_data):
+            cell_str = str(cell)
+            w = padded_widths[ci] - 2  # content width
+            if aligns[ci] == 'right':
+                formatted = cell_str.rjust(w)
+            elif aligns[ci] == 'center':
+                formatted = cell_str.center(w)
+            else:
+                formatted = cell_str.ljust(w)
+            parts.append(' ' + formatted + ' ')
+            parts.append('|')
+        lines.append(''.join(parts))
+
+    # Top border
+    sep_line()
+
+    # Headers
+    for hi, hrow in enumerate(headers):
+        while len(hrow) < num_cols:
+            hrow.append('')
+        data_line(hrow)
+
+    # Separator after headers (if -1 in separator_after or after all headers)
+    if -1 in separator_after or (headers and not separator_after):
+        sep_line()
+
+    # Data rows
+    for ri, row in enumerate(rows):
+        while len(row) < num_cols:
+            row.append('')
+        data_line(row)
+        if ri in separator_after:
+            sep_line()
+
+    # Footer
+    if footer:
+        sep_line()
+        while len(footer) < num_cols:
+            footer.append('')
+        data_line(footer)
+
+    # Bottom border
+    sep_line()
+
+    return '\n'.join(lines)
+
+
+def render_table_split(data, padded_widths, num_cols):
+    """Split a wide table into multiple tables, repeating the first column."""
+    headers = data.get('headers', [])
+    aligns = data.get('align', [])
+    rows = data.get('rows', [])
+    separator_after = data.get('separator_after', [])
+    footer = data.get('footer', None)
+
+    while len(aligns) < num_cols:
+        aligns.append('left')
+
+    # Figure out how to split: first column is always included
+    first_col_width = padded_widths[0] + 2  # +2 for the | borders
+    splits = []
+    current_group = [0]
+    current_width = first_col_width
+
+    for ci in range(1, num_cols):
+        needed = padded_widths[ci] + 1  # +1 for the | separator
+        if current_width + needed > MAX_WIDTH and len(current_group) > 1:
+            splits.append(current_group)
+            current_group = [0]
+            current_width = first_col_width
+        current_group.append(ci)
+        current_width += needed
+
+    if current_group:
+        splits.append(current_group)
+
+    results = []
+    for group in splits:
+        sub_data = {
+            'headers': [[h[ci] if ci < len(h) else '' for ci in group] for h in headers],
+            'align': [aligns[ci] for ci in group],
+            'rows': [[r[ci] if ci < len(r) else '' for ci in group] for r in rows],
+            'separator_after': separator_after,
+        }
+        if footer:
+            sub_data['footer'] = [footer[ci] if ci < len(footer) else '' for ci in group]
+        results.append(render_table(sub_data))
+
+    return '\n\n'.join(results)
+
+
+# ---------------------------------------------------------------------------
+# Layers mode (dedicated renderer with centered rows + bus connectors)
+# ---------------------------------------------------------------------------
+
+def render_layers(data):
+    title = data.get('title', '')
+    levels = data.get('levels', [])
+    connections = data.get('connections', 'between_layers')
+
+    # Compute layer label margin
+    max_label_len = max((len(lev.get('label', '')) for lev in levels), default=0)
+    label_margin = 0
+    if max_label_len > 0:
+        label_margin = max_label_len + 3  # "label | "
+    available_width = MAX_WIDTH - label_margin
+
+    g = Grid()
+    y = 0
+    if title:
+        g.put_str(0, label_margin, title)
+        y = 2
+
+    row_spacing = 2
+    level_positions = []  # list of (y, row_height, [(x, w, h), ...])
+
+    for li, level in enumerate(levels):
+        boxes = level['boxes']
+        widths = [box_min_width(b) for b in boxes]
+        heights = [box_height(b) for b in boxes]
+
+        spacing = 3
+        total_w = sum(widths) + spacing * max(0, len(boxes) - 1)
+        if total_w > available_width and spacing > 1:
+            spacing = 1
+            total_w = sum(widths) + spacing * max(0, len(boxes) - 1)
+
+        start_x = label_margin + max(0, (available_width - total_w) // 2)
+        row_height = max(heights) if heights else 3
+
+        box_positions = []
+        x = start_x
+        for bi, (lbl_text, bw, bh) in enumerate(zip(boxes, widths, heights)):
+            draw_box(g, y, x, bw, bh, lbl_text)
+            box_positions.append((x, bw, bh))
+            x += bw + spacing
+
+        # Draw layer label
+        lbl = level.get('label', '')
+        if lbl and label_margin > 0:
+            label_y = y + row_height // 2
+            g.put_str(label_y, 0, lbl.rjust(max_label_len))
+            g.put_str(label_y, max_label_len + 1, '|')
+
+        level_positions.append((y, row_height, box_positions))
+        y += row_height + row_spacing
+
+    # Draw connectors between adjacent levels
+    if connections == 'between_layers':
+        for li in range(len(level_positions) - 1):
+            top_y, top_rh, top_boxes = level_positions[li]
+            bot_y, bot_rh, bot_boxes = level_positions[li + 1]
+
+            gap_start = top_y + top_rh  # first row below top boxes
+            gap_end = bot_y - 1         # last row above bottom boxes
+            mid_row = gap_start + (gap_end - gap_start) // 2
+
+            top_centers = [x + w // 2 for x, w, h in top_boxes]
+            bot_centers = [x + w // 2 for x, w, h in bot_boxes]
+
+            if len(top_boxes) == 1 and len(bot_boxes) == 1:
+                tc = top_centers[0]
+                bc = bot_centers[0]
+                if tc == bc:
+                    for r in range(gap_start, gap_end + 1):
+                        g.put(r, tc, '|')
+                    g.put(gap_end, tc, 'v')
+                else:
+                    for r in range(gap_start, mid_row):
+                        g.put(r, tc, '|')
+                    min_c = min(tc, bc)
+                    max_c = max(tc, bc)
+                    for c in range(min_c, max_c + 1):
+                        g.put(mid_row, c, '-')
+                    g.put(mid_row, tc, '+')
+                    g.put(mid_row, bc, '+')
+                    for r in range(mid_row + 1, gap_end + 1):
+                        g.put(r, bc, '|')
+                    g.put(gap_end, bc, 'v')
+
+            elif len(top_boxes) == 1:
+                # Fan-out: bus pattern
+                src_col = top_centers[0]
+                left_c = min(bot_centers)
+                right_c = max(bot_centers)
+                for r in range(gap_start, mid_row):
+                    g.put(r, src_col, '|')
+                for c in range(left_c, right_c + 1):
+                    g.put(mid_row, c, '-')
+                g.put(mid_row, src_col, '+')
+                for bc in bot_centers:
+                    g.put(mid_row, bc, '+')
+                for bc in bot_centers:
+                    for r in range(mid_row + 1, gap_end + 1):
+                        g.put(r, bc, '|')
+                    g.put(gap_end, bc, 'v')
+
+            elif len(bot_boxes) == 1:
+                # Fan-in: bus pattern
+                dst_col = bot_centers[0]
+                left_c = min(top_centers)
+                right_c = max(top_centers)
+                for tc in top_centers:
+                    for r in range(gap_start, mid_row):
+                        g.put(r, tc, '|')
+                for c in range(left_c, right_c + 1):
+                    g.put(mid_row, c, '-')
+                g.put(mid_row, dst_col, '+')
+                for tc in top_centers:
+                    g.put(mid_row, tc, '+')
+                for r in range(mid_row + 1, gap_end + 1):
+                    g.put(r, dst_col, '|')
+                g.put(gap_end, dst_col, 'v')
+
+            else:
+                # N to N: match by index
+                for i in range(min(len(top_boxes), len(bot_boxes))):
+                    tc = top_centers[i]
+                    bc = bot_centers[i]
+                    if tc == bc:
+                        for r in range(gap_start, gap_end + 1):
+                            g.put(r, tc, '|')
+                        g.put(gap_end, tc, 'v')
+                    else:
+                        for r in range(gap_start, mid_row):
+                            g.put(r, tc, '|')
+                        min_c = min(tc, bc)
+                        max_c = max(tc, bc)
+                        for c in range(min_c, max_c + 1):
+                            g.put(mid_row, c, '-')
+                        g.put(mid_row, tc, '+')
+                        g.put(mid_row, bc, '+')
+                        for r in range(mid_row + 1, gap_end + 1):
+                            g.put(r, bc, '|')
+                        g.put(gap_end, bc, 'v')
+
+    return g.render()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    try:
+        data = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print('Error: Invalid JSON input: {}'.format(e), file=sys.stderr)
+        sys.exit(1)
+
+    if 'diagram' in data:
+        result = render_diagram(data['diagram'])
+    elif 'table' in data:
+        result = render_table(data['table'])
+    elif 'layers' in data:
+        result = render_layers(data['layers'])
+    else:
+        print('Error: JSON must contain a "diagram", "table", or "layers" key.', file=sys.stderr)
+        sys.exit(1)
+
+    # Width enforcement
+    lines = result.split('\n')
+    enforced = []
+    for line in lines:
+        if len(line) > MAX_WIDTH:
+            enforced.append(line[:MAX_WIDTH])
+        else:
+            enforced.append(line)
+
+    print('\n'.join(enforced))
+
+
+if __name__ == '__main__':
+    main()
