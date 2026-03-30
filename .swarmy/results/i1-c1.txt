@@ -1,0 +1,14 @@
+scenario_1: box=2 vert=3 horiz=4 conn=1 text=2 read=2 subtotal=14/30
+scenario_2: box=5 vert=4 horiz=4 conn=4 text=4 read=2 subtotal=23/30
+scenario_3: box=5 vert=4 horiz=4 conn=3 text=4 read=4 subtotal=24/30
+scenario_4: box=5 vert=5 horiz=5 conn=4 text=5 read=5 subtotal=29/30
+scenario_5: box=1 vert=2 horiz=3 conn=1 text=1 read=1 subtotal=9/30
+scenario_6: box=5 vert=5 horiz=5 conn=4 text=5 read=3 subtotal=27/30
+score=126/180
+notes:
+- CRITICAL BUG: vertical connectors between boxes in the same column that skip rows (e.g. upward connector from lastack->closed, or gte3->creds) draw through ALL intermediate boxes, destroying their text labels. This is the #1 issue, causing catastrophic failures in scenarios 1 and 5.
+- CLI has no sequence diagram mode. Scenario 2 was approximated with diagram mode using L-shaped connectors. Result is functional but doesn't look like a sequence diagram (no lifelines, no dashed arrows, no actor alignment).
+- Layers mode (scenario 4) is the strongest — fan-in/fan-out bus connectors work well. Minor limitation: N-to-N connections between layers match by index, so if top layer has more boxes than bottom, some go unconnected.
+- Table mode (scenario 6) works well but auto-splits at 78 chars. Header spanning is fake (empty cells, not visual merge). Alignment within sub-tables is perfect.
+- L-shape connectors (different row AND column) work well — no text corruption.
+- Simple vertical connectors between adjacent rows work fine. Only connectors that skip intermediate rows cause corruption.
